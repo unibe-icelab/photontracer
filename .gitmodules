@@ -1,0 +1,9 @@
+[submodule "external/otk"]
+	path = external/otk
+	url = https://github.com/NVIDIA/optix-toolkit.git
+[submodule "external/pybind11"]
+	path = external/pybind11
+	url = https://github.com/pybind/pybind11.git
+[submodule "external/optix"]
+	path = external/optix
+	url = https://github.com/NVIDIA/optix-dev.git

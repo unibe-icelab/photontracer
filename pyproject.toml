@@ -1,0 +1,36 @@
+[project]
+name = "photontracer"
+version = "0.7.0"
+description = "PhotonTracer: Light scattering simulation"
+authors = [{name = "Rafael Ottersberg", email = "rafael.ottersberg@gmx.ch"}]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+
+[build-system]
+requires = [
+    "scikit-build-core",
+    "numpy"
+]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+cmake.version = ">=3.27"
+cmake.source-dir = "."
+cmake.build-type = "Release"
+build-dir = "build"
+wheel.packages = ["photontracer"]
+
+wheel.license-files = [
+  "LICENSE",
+  "src/photonTracer/THIRD_PARTY_NOTICES.md",
+  "external/otk/LICENSE.txt",
+  "external/otk/ShaderUtil/LICENSE.txt",
+  "external/otk/Memory/LICENSE.txt",
+  "external/optix/LICENSE.txt",
+  "external/optix/license_info.txt",
+  "external/pybind11/LICENSE"
+]
+
+[project.optional-dependencies]
+test = ["pytest", "trimesh"]

@@ -1,0 +1,10 @@
+name: photontracer
+channels:
+  - conda-forge
+dependencies:
+  - compilers
+  - python=3.11
+  - cmake
+  - ninja
+  - cuda-toolkit=12.4
+  - gtest
