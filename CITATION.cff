@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite our article in the
+  Journal of Quantitative Spectroscopy and Radiative Transfer (JQRST)."
+authors:
+  - family-names: Ottersberg
+    given-names: Rafael
+    orcid: https://orcid.org/0009-0002-0254-9411
+title: "PhotonTracer"
+version: 1.0.1
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.18989228
+date-released: 2026-03-12
+preferred-citation:
+  authors:
+    - family-names: Ottersberg
+      given-names: Rafael
+      orcid: https://orcid.org/0009-0002-0254-9411
+    - family-names: Pommerol
+      given-names: Antoine
+      orcid: https://orcid.org/0000-0002-9165-9243
+    - family-names: Thomas
+      given-names: Nicolas
+      orcid: https://orcid.org/0000-0002-0146-0071
+  date-published: 
+  doi: j.jqsrt.2026.109894
+  issn:
+  issue:
+  journal: Journal of Quantitative Spectroscopy and Radiative Transfer
+  publisher:
+    name: Elsevier
+  start:
+  title: "PhotonTracer: A GPU-accelerated ray tracing simulation of light transport in highly multiple scattering media"
+  type: article
+  url: "https://doi.org/10.1016/j.jqsrt.2026.109894"
+  volume:
