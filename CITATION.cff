@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite our article in the
-  Journal of Quantitative Spectroscopy and Radiative Transfer (JQRST)."
+  Journal of Quantitative Spectroscopy and Radiative Transfer (10.1016/j.jqsrt.2026.109894)."
 authors:
   - family-names: Ottersberg
     given-names: Rafael
@@ -22,7 +22,7 @@ preferred-citation:
     - family-names: Thomas
       given-names: Nicolas
       orcid: https://orcid.org/0000-0002-0146-0071
-  date-published: 
+  date-published:
   doi: j.jqsrt.2026.109894
   issn:
   issue:
