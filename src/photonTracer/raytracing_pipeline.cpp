@@ -35,10 +35,10 @@ long currentTimeMs()
     return duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count();
 }
 
-void RayTracingPipeline::initialize(const OptixDeviceContext context, const GeometryType geometryType, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth)
+void RayTracingPipeline::initialize(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth)
 {
     maxTraversableGraphDepth_ = maxTraversableGraphDepth;
-    setupPipelineCompileOptions(geometryType);
+    setupPipelineCompileOptions();
     createModules(context);
     createProgramGroups(context);
     linkPipeline(context);
@@ -118,10 +118,8 @@ RayTracingPipeline::~RayTracingPipeline()
     }
 }
 
-void RayTracingPipeline::setupPipelineCompileOptions(GeometryType geometryType)
+void RayTracingPipeline::setupPipelineCompileOptions()
 {
-    OptixPrimitiveTypeFlags primitiveTypeFlags;
-
     pipelineCompileOptions_.usesMotionBlur = false;
     pipelineCompileOptions_.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
     pipelineCompileOptions_.numPayloadValues = 22;

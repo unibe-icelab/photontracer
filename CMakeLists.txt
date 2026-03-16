@@ -67,6 +67,8 @@ if(PHOTONTRACER_BUILD_TESTS)
   find_package( GTest REQUIRED )
 endif()
 
+set(Python3_FIND_STRATEGY LOCATION)
+set(Python3_FIND_VIRTUALENV FIRST)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 add_subdirectory(external/pybind11)
 

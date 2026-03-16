@@ -42,6 +42,12 @@ install(TARGETS photontracer_bindings
 
 otk_target_options( photontracer_bindings )
 
+# GCC may emit a false positive in pybind11 internals (-Wstringop-overread).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_compile_options(photontracer_bindings PRIVATE -Wno-stringop-overread)
+  target_link_options(photontracer_bindings PRIVATE -Wno-stringop-overread)
+endif()
+
 target_include_directories(photontracer_bindings PRIVATE
   ${CMAKE_BINARY_DIR}/src/photonTracer/photonTracerKernels
 )

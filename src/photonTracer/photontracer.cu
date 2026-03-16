@@ -115,6 +115,8 @@ static __forceinline__ __device__ void computeRayParallel(float3 &origin, float3
     origin += sourceRadius * (x * u + y * v);
 }
 
+// alternative method for isotropic ray generation: closer to SIRIS4
+/*
 static __forceinline__ __device__ void computeRayIsotropic(float3 &origin, float3 &direction, curandStateMRG32k3a *curandState)
 {
     auto isotropic_ray_gen_data = params.rayGeneratorData.isotropic;
@@ -194,6 +196,7 @@ static __forceinline__ __device__ void computeRayIsotropic(float3 &origin, float
     origin = isotropic_ray_gen_data.center + Xrot;
     direction = d; // points inward toward particle center (same as Fortran KEOUT)
 }
+ß*/
 
 static __forceinline__ __device__ void computeRayIsotropicMC(float3 &origin, float3 &direction, curandStateMRG32k3a *curandState)
 {

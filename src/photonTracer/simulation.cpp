@@ -339,7 +339,7 @@ void Simulation::initializePipeline()
     {
         throw std::runtime_error("Wavelength not set. Call setWavelengthUm() first.");
     }
-    rayTracingPipeline_ = std::make_unique<RayTracingPipeline>(context_, geometry_->getType(), materials_, wavelengthUm_, maxNestedGeometryLevels_);
+    rayTracingPipeline_ = std::make_unique<RayTracingPipeline>(context_, materials_, wavelengthUm_, maxNestedGeometryLevels_);
 }
 
 void Simulation::initializePipelineDensity()

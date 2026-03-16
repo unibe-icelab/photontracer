@@ -7,9 +7,9 @@
 class RayTracingPipeline
 {
 public:
-    RayTracingPipeline(const OptixDeviceContext context, const GeometryType geometryType, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth = 1)
+    RayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth = 1)
     {
-        initialize(context, geometryType, materials, wavelengthUm, maxTraversableGraphDepth);
+        initialize(context, materials, wavelengthUm, maxTraversableGraphDepth);
     }
     ~RayTracingPipeline();
 
@@ -39,9 +39,9 @@ private:
     bool sbtInitialized_ = false;
 
     void initialize(
-        const OptixDeviceContext context, const GeometryType geometryType,
-        std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth);
-    void setupPipelineCompileOptions(const GeometryType geometryType);
+        const OptixDeviceContext context, std::vector<Material> materials, 
+        const float wavelengthUm, uint32_t maxTraversableGraphDepth);
+    void setupPipelineCompileOptions();
     void createModules(const OptixDeviceContext context);
     void createProgramGroups(const OptixDeviceContext context);
     void linkPipeline(const OptixDeviceContext context);
