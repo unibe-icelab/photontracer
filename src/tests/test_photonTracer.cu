@@ -60,7 +60,7 @@ TEST(LightScattering, Absorption)
     EXPECT_FALSE(absorbed);
     EXPECT_NEAR(travelled_distance, res_travelled_distance, 1e-4);
 
-    random_number = 0.000001f;
+    random_number = 0.999999f;
     res_travelled_distance = 0.02233042; // 22um
     cudaMemcpy(d_random_number, &random_number, sizeof(float), cudaMemcpyHostToDevice);
     testAbsorption<<<1, 1>>>(d_travelled_distance, d_absorbed, d_random_number, d_k);
@@ -72,7 +72,7 @@ TEST(LightScattering, Absorption)
     EXPECT_NEAR(travelled_distance, res_travelled_distance, 1e-3);
 
     // Test on CPU
-    random_number = 0.000001f;
+    random_number = 0.999999f;
     res_travelled_distance = 0.02233042; // 22um
     float max_distance = 1e-1f;          // 100 microns
     float wavelengthUm = 0.55f;          // 550 nm

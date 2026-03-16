@@ -9,12 +9,13 @@ def test_reflection_angle():
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
     origin = -k
     ray_generator = ParallelRayGenerator(
-        origin=origin, direction=k, offset_radius=0)
+        number_of_rays=1000,
+        origin=origin, direction=k, 
+        offset_radius=0)
     # create slab at z=0
     slab = trimesh.creation.box(extents=[
                                 10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
 
-    sim.number_of_rays = 1000
     sim.wavelength_um = 1
     sim.stokes_vector = [1, 0, 0, 0]
     sim.geometry = MeshGeometry(slab.vertices, slab.faces)
@@ -22,7 +23,7 @@ def test_reflection_angle():
     glass = Material(MaterialType.REFRACTIVE, 1.5+0j)
     sim.materials = [vacuum, glass]
     sim.ray_generator = ray_generator
-    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.DEPTH,
+    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.SCATTERING_COUNT,
                    OutputType.LAST_DIRECTION, OutputType.STOKES_VECTOR]
     
     sim.run()
@@ -30,14 +31,13 @@ def test_reflection_angle():
     k_out = sim.get_output_buffer(OutputType.LAST_DIRECTION)
     k_in = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
     stokes = sim.get_output_buffer(OutputType.STOKES_VECTOR)
-    depth = sim.get_output_buffer(OutputType.DEPTH)
-
+    count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
 
     # check if k_in if equal to k for all rays
     k_norm = k / np.linalg.norm(k)
     assert np.allclose(k_in, k_norm), "Input directions do not match"
 
-    escape_up = (depth == 1) & (k_out[:, 2] > 0)
+    escape_up = (count == 1) & (k_out[:, 2] > 0)
     k_out_up = k_out[escape_up]
     stokes_up = stokes[escape_up]
 
@@ -61,23 +61,23 @@ def test_circular_polarization_at_normal():
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
     print(f"{k=}")
     origin = -k
+    number_of_rays = 1000
     ray_generator = ParallelRayGenerator(
-        origin=origin, direction=k, offset_radius=0)
+        number_of_rays = number_of_rays, origin=origin, direction=k, offset_radius=0)
     # create slab at z=0
     slab = trimesh.creation.box(extents=[
                                 10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
     geometry = MeshGeometry(slab.vertices, slab.faces)
 
-    sim.number_of_rays = 1000
     sim.wavelength_um = 1
-    sim.max_depth = 1
+    sim.max_scattering_count = 1
     sim.stokes_vector = [1, 0, 0, -1]
     sim.geometry = geometry
     vacuum = Material(MaterialType.REFRACTIVE, 1+0j)
     glass = Material(MaterialType.REFRACTIVE, 1.5+0j)
     sim.materials = [vacuum, glass]
     sim.ray_generator = ray_generator
-    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.DEPTH,
+    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.SCATTERING_COUNT,
                    OutputType.LAST_DIRECTION, OutputType.STOKES_VECTOR]
     
     sim.run()
@@ -85,14 +85,14 @@ def test_circular_polarization_at_normal():
     k_out = sim.get_output_buffer(OutputType.LAST_DIRECTION)
     k_in = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
     stokes = sim.get_output_buffer(OutputType.STOKES_VECTOR)
-    depth = sim.get_output_buffer(OutputType.DEPTH)
+    count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
 
     # check if k_in if equal to k for all rays
     k_norm = k / np.linalg.norm(k)
     assert np.allclose(k_in, k_norm), "Input directions do not match"
 
-    escape_up = (depth == 1) & (k_out[:, 2] > 0)
-    print(escape_up.sum() / len(depth))
+    escape_up = (count == 1) & (k_out[:, 2] > 0)
+    print(escape_up.sum() / len(count))
 
     stokes_up = stokes[escape_up]
     stokes_down = stokes[~escape_up]
@@ -114,39 +114,36 @@ def test_linear_polarization_at_normal():
     print(f"{k=}")
     origin = -k
     ray_generator = ParallelRayGenerator(
-        origin=origin, direction=k, offset_radius=0)
+        number_of_rays=1000, origin=origin, direction=k, offset_radius=0)
     # create slab at z=0
     slab = trimesh.creation.box(extents=[
                                 10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
     geometry = MeshGeometry(slab.vertices, slab.faces)
 
-    outputs = [OutputType.SOURCE_DIRECTION, OutputType.DEPTH,
-               OutputType.LAST_DIRECTION, OutputType.STOKES_VECTOR]
 
-    sim.number_of_rays = 1000
     sim.wavelength_um = 1
-    sim.max_depth = 1
+    sim.max_scattering_count = 1
     sim.stokes_vector = [1, 1, 0, 0]
     sim.geometry = geometry
     vacuum = Material(MaterialType.REFRACTIVE, 1+0j)
     glass = Material(MaterialType.REFRACTIVE, 1.5+0j)
     sim.materials = [vacuum, glass]
     sim.ray_generator = ray_generator
-    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.DEPTH,
+    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.SCATTERING_COUNT,
                    OutputType.LAST_DIRECTION, OutputType.STOKES_VECTOR]
     sim.run()
 
     k_out = sim.get_output_buffer(OutputType.LAST_DIRECTION)
     k_in = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
     stokes = sim.get_output_buffer(OutputType.STOKES_VECTOR)
-    depth = sim.get_output_buffer(OutputType.DEPTH)
+    count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
 
     # check if k_in if equal to k for all rays
     k_norm = k / np.linalg.norm(k)
     assert np.allclose(k_in, k_norm), "Input directions do not match"
 
-    escape_up = (depth == 1) & (k_out[:, 2] > 0)
-    print(escape_up.sum() / len(depth))
+    escape_up = (count == 1) & (k_out[:, 2] > 0)
+    print(escape_up.sum() / len(count))
 
     stokes_up = stokes[escape_up]
     stokes_down = stokes[~escape_up]
@@ -168,15 +165,14 @@ def test_linear_u_polarization_at_normal():
     print(f"{k=}")
     origin = -k
     ray_generator = ParallelRayGenerator(
-        origin=origin, direction=k, offset_radius=0)
+        number_of_rays=1000, origin=origin, direction=k, offset_radius=0)
     # create slab at z=0
     slab = trimesh.creation.box(extents=[
                                 10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
     geometry = MeshGeometry(slab.vertices, slab.faces)
 
-    sim.number_of_rays = 1000
     sim.wavelength_um = 1
-    sim.max_depth = 1
+    sim.max_scattering_count = 1
     s = [1, 0, 1, 0]
     sim.stokes_vector = s
     sim.geometry = geometry
@@ -184,21 +180,21 @@ def test_linear_u_polarization_at_normal():
     glass = Material(MaterialType.REFRACTIVE, 1.5+0j)
     sim.materials = [vacuum, glass]
     sim.ray_generator = ray_generator
-    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.DEPTH,
+    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.SCATTERING_COUNT,
                    OutputType.LAST_DIRECTION, OutputType.STOKES_VECTOR]
     sim.run()
 
     k_out = sim.get_output_buffer(OutputType.LAST_DIRECTION)
     k_in = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
     stokes = sim.get_output_buffer(OutputType.STOKES_VECTOR)
-    depth = sim.get_output_buffer(OutputType.DEPTH)
+    count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
 
     # check if k_in if equal to k for all rays
     k_norm = k / np.linalg.norm(k)
     assert np.allclose(k_in, k_norm), "Input directions do not match"
 
-    escape_up = (depth == 1) & (k_out[:, 2] > 0)
-    print(escape_up.sum() / len(depth))
+    escape_up = (count == 1) & (k_out[:, 2] > 0)
+    print(escape_up.sum() / len(count))
 
     stokes_up = stokes[escape_up]
     stokes_down = stokes[~escape_up]
@@ -223,13 +219,12 @@ def test_ref_brewster_p_pol():
 
     origin = -k
     ray_generator = ParallelRayGenerator(
-        origin=origin, direction=k, offset_radius=0)
+        number_of_rays=1000, origin=origin, direction=k, offset_radius=0)
     # create slab at z=0
     slab = trimesh.creation.box(extents=[
                                 10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
     geometry = MeshGeometry(slab.vertices, slab.faces)
 
-    sim.number_of_rays = 1000
     sim.q_minus_axis_seed = [0, 1, 0]
     sim.wavelength_um = 1
     sim.stokes_vector = [1, 1, 0, 0]
@@ -238,19 +233,19 @@ def test_ref_brewster_p_pol():
     glass = Material(MaterialType.REFRACTIVE, 1.5+0j)
     sim.materials = [vacuum, glass]
     sim.ray_generator = ray_generator
-    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.DEPTH,
+    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.SCATTERING_COUNT,
                    OutputType.LAST_DIRECTION, OutputType.STOKES_VECTOR]
     sim.run()
 
     k_out = sim.get_output_buffer(OutputType.LAST_DIRECTION)
     k_in = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
-    depth = sim.get_output_buffer(OutputType.DEPTH)
+    count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
 
     # check if k_in if equal to k for all rays
     k_norm = k / np.linalg.norm(k)
     assert np.allclose(k_in, k_norm), "Input directions do not match"
 
-    escape_up = (depth == 1) & (k_out[:, 2] > 0)
+    escape_up = (count == 1) & (k_out[:, 2] > 0)
     
     assert escape_up.sum() == 0, "No rays should be reflected at brewster angle"
 
@@ -285,18 +280,18 @@ def test_layered_absorption():
         Material(MaterialType.REFRACTIVE, 1.5+1e-4j) # dark glass
     ]
 
+    number_of_rays = 1_000_000
     sim.length_unit = LengthUnit.MILLI_METER
-    sim.number_of_rays = 1_000_000
     sim.ray_generator = ParallelRayGenerator(
-        origin=[0, 0, 1000], direction=[0, 0, -1], offset_radius=0)
-    sim.outputs = [OutputType.RAY_STATE, OutputType.LAST_MEDIUM_ID, OutputType.SCATTERING_ANGLE, OutputType.LAST_POSITION, OutputType.DEPTH
+        number_of_rays=number_of_rays, origin=[0, 0, 1000], direction=[0, 0, -1], offset_radius=0)
+    sim.outputs = [OutputType.RAY_STATE, OutputType.LAST_MEDIUM_ID, OutputType.SCATTERING_ANGLE, OutputType.LAST_POSITION, OutputType.SCATTERING_COUNT
 ]
 
     r_pts = []
     t_pts = []
-    a_1s = []
+    a_2s = []
     a_3s = []
-    a_5s = []
+    a_4s = []
     import random
 
     for _ in range(10):
@@ -307,8 +302,8 @@ def test_layered_absorption():
         last_medium_ids = sim.get_output_buffer(OutputType.LAST_MEDIUM_ID)
         ray_states = sim.get_output_buffer(OutputType.RAY_STATE)
         last_position = sim.get_output_buffer(OutputType.LAST_POSITION)
-        depth = sim.get_output_buffer(OutputType.DEPTH)
-        print(depth.mean(), depth.max())
+        count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
+        print(count.mean(), count.max())
 
         escaped = ray_states == 0
         absorbed = ray_states == 1
@@ -317,24 +312,24 @@ def test_layered_absorption():
 
         absorbed_medium = last_medium_ids[absorbed]
         absorption_positions = last_position[absorbed]
-        r_pt = np.sum(escape_up) / sim.number_of_rays
-        t_pt = np.sum(escape_down) / sim.number_of_rays
+        r_pt = np.sum(escape_up) / number_of_rays
+        t_pt = np.sum(escape_down) / number_of_rays
 
-        a_1 = np.sum(absorbed_medium == 1 & (absorption_positions[:,2] > -2.5)) / sim.number_of_rays
-        a_3 = np.sum(absorbed_medium == 3) / sim.number_of_rays
-        a_5 = np.sum(absorbed_medium == 3 & (absorption_positions[:,2] < -2.5)) / sim.number_of_rays
+        a_2 = np.sum(absorbed_medium == 1 & (absorption_positions[:,2] > -2.5)) / number_of_rays
+        a_3 = np.sum(absorbed_medium == 3) / number_of_rays
+        a_4 = np.sum(absorbed_medium == 3 & (absorption_positions[:,2] < -2.5)) / number_of_rays
 
         r_pts.append(r_pt)
         t_pts.append(t_pt)
-        a_1s.append(a_1)
+        a_2s.append(a_2)
         a_3s.append(a_3)
-        a_5s.append(a_5)
+        a_4s.append(a_4)
 
     r_mean = np.mean(r_pts)
     t_mean = np.mean(t_pts)
-    a_2_mean = np.mean(a_1s)
+    a_2_mean = np.mean(a_2s)
     a_3_mean = np.mean(a_3s)
-    a_4_mean = np.mean(a_5s)
+    a_4_mean = np.mean(a_4s)
 
     # expected values from TMM calculation
     r_expected = 0.04560143096001716
