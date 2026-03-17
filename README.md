@@ -1,6 +1,7 @@
 # PhotonTracer
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19048554.svg)](https://doi.org/10.5281/zenodo.19048554)
+[![DOI (Article)](https://img.shields.io/badge/DOI%20(Article)-10.1016%2Fj.jqsrt.2026.109894-blue)](https://doi.org/10.1016/j.jqsrt.2026.109894)
+[![DOI (Code)](https://img.shields.io/badge/DOI%20(Code)-10.5281%2Fzenodo.19048554-blue)](https://doi.org/10.5281/zenodo.19048554)
 ![GitHub License](https://img.shields.io/github/license/unibe-icelab/photontracer)
 
 PhotonTracer is a GPU-accelerated raytracing simulation for arbitrary media in the geometric optics limit. The geometry is represented by a mesh. It can handle media consisting of billions of arbitrary particles and simulate the interaction of millions of photons with the medium. A single photon can scatter millions of times in the medium.
