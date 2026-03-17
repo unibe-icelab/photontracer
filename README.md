@@ -1,5 +1,8 @@
 # PhotonTracer
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19048554.svg)](https://doi.org/10.5281/zenodo.19048554)
+![GitHub License](https://img.shields.io/github/license/unibe-icelab/photontracer)
+
 PhotonTracer is a GPU-accelerated raytracing simulation for arbitrary media in the geometric optics limit. The geometry is represented by a mesh. It can handle media consisting of billions of arbitrary particles and simulate the interaction of millions of photons with the medium. A single photon can scatter millions of times in the medium.
 The material properties are defined by a set of complex refractive indices. Up to 16 different materials can be defined in a single simulation. The simulation is written in C++ and uses the OptiX raytracing engine to accelerate the simulation on NVIDIA GPUs.
 The Simulation has pybind11 Python bindings and is compiled as a Python package, using scikit-build.
