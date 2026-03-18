@@ -22,15 +22,14 @@ preferred-citation:
     - family-names: Thomas
       given-names: Nicolas
       orcid: https://orcid.org/0000-0002-0146-0071
-  date-published:
-  doi: j.jqsrt.2026.109894
-  issn:
-  issue:
+  date-published: 2026-07-01
+  doi: https://doi.org/10.1016/j.jqsrt.2026.109894
+  issn: 0022-4073
   journal: Journal of Quantitative Spectroscopy and Radiative Transfer
   publisher:
     name: Elsevier
-  start:
+  start: 109894
   title: "PhotonTracer: A GPU-accelerated ray tracing simulation of light transport in highly multiple scattering media"
   type: article
-  url: "https://doi.org/10.1016/j.jqsrt.2026.109894"
-  volume:
+  url: "https://www.sciencedirect.com/science/article/pii/S0022407326000889"
+  volume: 357
