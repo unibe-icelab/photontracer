@@ -11,6 +11,10 @@
 #include <cstdint>
 #include <cstdio>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #if !defined(PHOTONTRACER_NO_CUDA)
 
 #include <OptiXToolkit/ShaderUtil/vec_math.h>
@@ -24,6 +28,11 @@
 #define PT_HD
 #define PT_INLINE inline
 
+struct uint3
+{
+    unsigned int x, y, z;
+};
+
 struct float3
 {
     float x, y, z;
@@ -34,6 +43,7 @@ struct float4
     float x, y, z, w;
 };
 
+inline uint3 make_uint3(unsigned int x, unsigned int y, unsigned int z) { return {x, y, z}; }
 inline float3 make_float3(float x, float y, float z) { return {x, y, z}; }
 inline float4 make_float4(float x, float y, float z, float w) { return {x, y, z, w}; }
 
