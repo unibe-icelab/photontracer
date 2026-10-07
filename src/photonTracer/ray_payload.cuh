@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <array>
 
-#include "light_scattering.cuh"
+#include "light_scattering.h"
 
 #pragma once
 

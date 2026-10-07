@@ -1,17 +1,24 @@
+# GPU tests: the physics functions run in CUDA kernels
+add_executable(runTests
+  test_light_scattering.cu)
 
-# Add test executable
-add_executable(runTests 
-  test_photonTracer.cu)
-
-target_link_libraries(runTests 
+target_link_libraries(runTests
   ${GTEST_LIBRARIES}
   ${CUDA_LIBRARIES}
   OptiXToolkit::Memory
   OptiXToolkit::ShaderUtil)
 
-# Set properties for CUDA compilation
 set_target_properties(runTests PROPERTIES
   CUDA_SEPARABLE_COMPILATION ON
 )
 
 add_test(NAME runTests COMMAND runTests)
+
+# CPU tests: the same functions built as plain C++ without CUDA headers
+add_executable(runHostTests
+  test_light_scattering_host.cpp)
+
+target_compile_definitions(runHostTests PRIVATE PHOTONTRACER_NO_CUDA)
+target_link_libraries(runHostTests ${GTEST_LIBRARIES})
+
+add_test(NAME runHostTests COMMAND runHostTests)
