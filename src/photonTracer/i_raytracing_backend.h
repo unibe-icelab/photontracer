@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -23,6 +24,12 @@ public:
     virtual uint32_t getMaxTraversableGraphDepth() const = 0;
     virtual uint32_t getMaxSubGeometries() const = 0;
     virtual uint32_t getMaxMeshTriangles() const = 0;
+
+    // Memory the launches write to; for a CPU backend this is plain host memory
+    virtual void *allocateBuffer(size_t bytes) = 0;
+    virtual void freeBuffer(void *buffer) noexcept = 0;
+    virtual void clearBuffer(void *buffer, size_t bytes) = 0;
+    virtual void copyBufferToHost(void *host, const void *buffer, size_t bytes) = 0;
 
     virtual void buildGeometry(IGeometry &geometry) = 0;
 

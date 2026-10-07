@@ -4,12 +4,11 @@
 #include <limits>
 #include <stdexcept>
 
-#include <OptiXToolkit/Error/cudaErrorCheck.h>
 #include "output_buffers.h"
 #include "raytracing_output.h"
 
-OutputBuffers::OutputBuffers(const uint3 launchShape, const std::vector<BufferDescriptor> &descriptors)
-    : launchShape_(launchShape), bufferDescriptors_(descriptors)
+OutputBuffers::OutputBuffers(IRaytracingBackend &backend, const uint3 launchShape, const std::vector<BufferDescriptor> &descriptors)
+    : backend_(&backend), launchShape_(launchShape), bufferDescriptors_(descriptors)
 {
     for (const auto &descriptor : bufferDescriptors_)
     {
@@ -35,10 +34,10 @@ OutputBuffers::OutputBuffers(const uint3 launchShape, const std::vector<BufferDe
 
         if (bufferSize > 0)
         {
-            OTK_ERROR_CHECK(cudaMalloc(&layout.devicePtr, bufferSize));
+            layout.devicePtr = backend_->allocateBuffer(bufferSize);
             if (descriptor.zeroInitialize)
             {
-                OTK_ERROR_CHECK(cudaMemset(layout.devicePtr, 0, bufferSize));
+                backend_->clearBuffer(layout.devicePtr, bufferSize);
             }
         }
         else
@@ -56,7 +55,7 @@ OutputBuffers::~OutputBuffers()
     {
         if (buffer.second.devicePtr)
         {
-            cudaFree(buffer.second.devicePtr); // a destructor must not throw
+            backend_->freeBuffer(buffer.second.devicePtr);
         }
     }
     buffers_.clear();
@@ -118,6 +117,24 @@ void OutputBuffers::clearZeroInitializedBuffers() const
         }
 
         const size_t bufferSize = elementCount * descriptor.elementSize;
-        OTK_ERROR_CHECK(cudaMemset(layout.devicePtr, 0, bufferSize));
+        backend_->clearBuffer(layout.devicePtr, bufferSize);
     }
+}
+
+void OutputBuffers::copyToHost(OutputType type, void *host) const
+{
+    const BufferLayout &layout = getBufferLayout(type);
+    for (const auto &descriptor : bufferDescriptors_)
+    {
+        if (descriptor.type == type)
+        {
+            const size_t bytes = static_cast<size_t>(layout.shape.x) * layout.shape.y * layout.shape.z * descriptor.elementSize;
+            if (bytes > 0 && layout.devicePtr)
+            {
+                backend_->copyBufferToHost(host, layout.devicePtr, bytes);
+            }
+            return;
+        }
+    }
+    throw std::runtime_error("Buffer descriptor not found for the specified output type");
 }

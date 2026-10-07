@@ -7,8 +7,6 @@
 #include <cmath>
 #include <limits>
 
-#include <OptiXToolkit/Error/cudaErrorCheck.h>
-#include <OptiXToolkit/Error/optixErrorCheck.h>
 
 #include "simulation.h"
 #include "raytracing_output.h"
@@ -296,7 +294,7 @@ void Simulation::allocateOutputBuffers(const uint3 launchShape)
         updateHealpixBufferShape();
     }
     freeOutputBuffers();
-    outputBuffers_ = std::make_unique<OutputBuffers>(launchShape, rayTracingResult_->getDescriptors());
+    outputBuffers_ = std::make_unique<OutputBuffers>(*backend_, launchShape, rayTracingResult_->getDescriptors());
 }
 
 void Simulation::freeOutputBuffers()
@@ -424,23 +422,24 @@ float Simulation::calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t
         geometryDirty_ = false;
     }
 
-    // allocate device buffer for counting intersections
-    int32_t *dIntersectionCountBuffer = nullptr;
-    OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dIntersectionCountBuffer), sizeof(int32_t) * numSamples)); // Assuming max 1024 bins
+    // Buffer the launch counts the surfaces each sample ray crosses in
+    auto freeBuffer = [this](int32_t *buffer) { backend_->freeBuffer(buffer); };
+    std::unique_ptr<int32_t, decltype(freeBuffer)> intersectionCounts(
+        static_cast<int32_t *>(backend_->allocateBuffer(sizeof(int32_t) * numSamples)), freeBuffer);
 
     InputParametersSampleDensity params;
     params.initSeed = initSeed_;
     params.numberOfRays = numSamples;
     params.boxMin = boxMin;
     params.boxMax = boxMax;
-    params.intersectionCountBuffer = dIntersectionCountBuffer;
+    params.intersectionCountBuffer = intersectionCounts.get();
 
     // Launch the ray tracing pipeline
     backend_->launchDensity(params, *geometry_);
 
     // Copy the intersection count back to host
     std::vector<int32_t> hIntersectionCounts(numSamples);
-    OTK_ERROR_CHECK(cudaMemcpy(hIntersectionCounts.data(), dIntersectionCountBuffer, sizeof(int32_t) * numSamples, cudaMemcpyDeviceToHost));
+    backend_->copyBufferToHost(hIntersectionCounts.data(), intersectionCounts.get(), sizeof(int32_t) * numSamples);
 
     uint32_t countInside = 0;
     for (int32_t &count : hIntersectionCounts)
@@ -453,8 +452,6 @@ float Simulation::calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t
 
     float volumeFraction = static_cast<float>(countInside) / static_cast<float>(numSamples);
 
-    // Free device buffer
-    OTK_ERROR_CHECK(cudaFree(dIntersectionCountBuffer));
     backend_->resetDensityPipeline();
 
     return volumeFraction;
