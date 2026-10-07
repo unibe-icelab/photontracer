@@ -15,6 +15,13 @@ If scenes differ, save the arrays of both builds and diff them:
     python benchmarks/golden.py --arrays arrays_b        (build under test)
     python benchmarks/golden.py --diff arrays_a arrays_b
 
+If the builds use different random number generators or backends, the arrays cannot be
+identical. Compare their statistics instead: the mean of every output, as a z-score.
+
+    python benchmarks/golden.py --rays 1000000 --summary summary_a.json     (reference build)
+    python benchmarks/golden.py --rays 1000000 --summary summary_b.json     (build under test)
+    python benchmarks/golden.py --compare-summary summary_a.json summary_b.json
+
 Compare only builds made with the same compiler flags on the same GPU. With
 --use_fast_math, nvcc may fuse multiplications and additions differently when
 code moves between functions, which changes the last bits of float results.
@@ -30,10 +37,12 @@ import sys
 import numpy as np
 import trimesh
 
+import photontracer
 from photontracer import (CameraRayGenerator, InstanceGeometry, IsotropicRayGenerator, Material, MaterialType,
                           MeshGeometry, OutputType, ParallelRayGenerator, Simulation)
 
 SEED = 7
+PRECISION = 1e-6  # relative floor when comparing means (about ten float ulps)
 OUTPUTS = [
     OutputType.LAST_DIRECTION, OutputType.LAST_POSITION, OutputType.RAY_STATE, OutputType.SCATTERING_COUNT,
     OutputType.STOKES_VECTOR, OutputType.OPTICAL_PATH_LENGTH, OutputType.NUMBER_OF_WARNINGS, OutputType.LAST_MEDIUM_ID,
@@ -101,8 +110,10 @@ SCENES = {
 }
 
 
-def run_scene(scene, rays):
+def run_scene(scene, rays, generator):
     sim = Simulation(gpu_id=0)
+    if generator:
+        sim.random_number_generator = getattr(photontracer.RandomNumberGenerator, generator)
     sim.geometry = scene["geometry"]()
     sim.materials = scene["materials"]
     sim.wavelength_um = 1.0
@@ -119,7 +130,8 @@ def run_scene(scene, rays):
         outputs.append(OutputType.DIRECTION_HISTOGRAM_HEALPIX)
     sim.outputs = outputs
     sim.run()
-    return {str(o).split(".")[-1]: np.ascontiguousarray(sim.get_output_buffer(o)) for o in outputs}
+    arrays = {str(o).split(".")[-1]: np.ascontiguousarray(sim.get_output_buffer(o)) for o in outputs}
+    return arrays, generator_of(sim)
 
 
 def digest(arrays):
@@ -127,6 +139,72 @@ def digest(arrays):
     for name in sorted(arrays):
         h.update(arrays[name].tobytes())
     return h.hexdigest()
+
+
+def generator_of(sim):
+    """Name of the generator of a simulation; builds before 1.1 only have curand."""
+    return sim.random_number_generator.name if hasattr(sim, "random_number_generator") else "MRG32K3A"
+
+
+def summarize(arrays):
+    """Mean, variance and sample size per component of every output."""
+    summary = {}
+    for name, array in arrays.items():
+        if name == "DIRECTION_HISTOGRAM_HEALPIX":
+            summary[name] = {"counts": array.astype(np.float64).tolist()}
+            continue
+        values = array.reshape(len(array), -1).astype(np.float64)
+        summary[name] = {"mean": np.nanmean(values, axis=0).tolist(), "var": np.nanvar(values, axis=0).tolist(),
+                         "n": np.sum(~np.isnan(values), axis=0).tolist()}
+    return summary
+
+
+def z_scores(a, b):
+    """Differences of the means in standard errors, as (name, component, z) tuples."""
+    scores = []
+    for name in a:
+        if name not in b:
+            continue
+        if "counts" in a[name]:  # Poisson counts per pixel
+            ca, cb = np.array(a[name]["counts"]), np.array(b[name]["counts"])
+            ca, cb = ca / ca.sum(), cb / cb.sum()
+            na, nb = np.sum(a[name]["counts"]), np.sum(b[name]["counts"])
+            sigma = np.sqrt(ca / na + cb / nb)
+            for pixel in np.nonzero(sigma)[0]:
+                scores.append((name, int(pixel), float((ca[pixel] - cb[pixel]) / sigma[pixel])))
+            continue
+        for c, (ma, va, na) in enumerate(zip(a[name]["mean"], a[name]["var"], a[name]["n"])):
+            mb, vb, nb = b[name]["mean"][c], b[name]["var"][c], b[name]["n"][c]
+            # Float rounding can shift a mean by a few ulps even if its spread is tiny (the intensity
+            # of the Stokes vector is 1 up to rounding), so add a relative precision floor
+            precision = PRECISION * max(abs(ma), abs(mb), np.sqrt(max(va, vb)))
+            sigma = np.sqrt(va / na + vb / nb + precision**2)
+            if sigma > 0:
+                scores.append((name, c, float((ma - mb) / sigma)))
+            elif ma != mb:
+                scores.append((name, c, float("inf")))
+    return scores
+
+
+def compare_summaries(path_a, path_b, limit=5.0):
+    with open(path_a) as f:
+        a = json.load(f)
+    with open(path_b) as f:
+        b = json.load(f)
+    print(f"A: {a.get('label') or '?'} ({a.get('rng')}), B: {b.get('label') or '?'} ({b.get('rng')})")
+    ok = True
+    total = 0
+    for scene in a["scenes"]:
+        if scene not in b["scenes"]:
+            continue
+        scores = z_scores(a["scenes"][scene], b["scenes"][scene])
+        total += len(scores)
+        worst = max(scores, key=lambda t: abs(t[2]), default=("-", 0, 0.0))
+        flag = "  TOO DIFFERENT" if abs(worst[2]) > limit else ""
+        ok &= abs(worst[2]) <= limit
+        print(f"  {scene:36s} {len(scores):4d} values, largest |z| = {abs(worst[2]):5.2f} ({worst[0]} {worst[1]}){flag}")
+    print(f"{total} comparisons; by chance about {total * 5.7e-7:.4f} of them would exceed |z| > {limit}")
+    return ok
 
 
 def compare_hashes(results, reference):
@@ -157,35 +235,52 @@ def diff_arrays(dir_a, dir_b):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scene", action="append", choices=SCENES, help="scene to run (default: all)")
+    parser.add_argument("--rng", choices=["PCG32", "MRG32K3A"], help="random number generator (default: that of the build)")
     parser.add_argument("--rays", type=int, default=200_000, help="rays per scene")
     parser.add_argument("--label", help="name of this build in the results")
     parser.add_argument("--output", help="write the hashes to this JSON file")
     parser.add_argument("--compare", help="JSON file of a reference build to compare with")
     parser.add_argument("--arrays", help="save the output arrays of every scene in this directory")
+    parser.add_argument("--summary", help="write the statistics of every output to this JSON file")
+    parser.add_argument("--compare-summary", nargs=2, metavar=("A", "B"), help="compare two --summary files and exit")
     parser.add_argument("--diff", nargs=2, metavar=("DIR_A", "DIR_B"), help="compare two --arrays directories and exit")
     args = parser.parse_args()
 
     if args.diff:
         diff_arrays(*args.diff)
         return
+    if args.compare_summary:
+        sys.exit(0 if compare_summaries(*args.compare_summary) else 1)
 
     if args.arrays:
         os.makedirs(args.arrays, exist_ok=True)
     results = {}
+    summaries = {}
+    generator = None
     for name in args.scene or SCENES:
-        arrays = run_scene(SCENES[name], args.rays)
+        arrays, generator = run_scene(SCENES[name], args.rays, args.rng)
         results[name] = digest(arrays)
+        if args.summary:
+            summaries[name] = summarize(arrays)
         print(f"{name:36s} {results[name][:20]}", flush=True)
         if args.arrays:
             np.savez(os.path.join(args.arrays, name + ".npz"), **arrays)
 
     if args.output:
         with open(args.output, "w") as f:
-            json.dump({"label": args.label or "", "rays": args.rays, "scenes": results}, f, indent=2)
+            json.dump({"label": args.label or "", "rng": generator, "rays": args.rays, "scenes": results}, f, indent=2)
+    if args.summary:
+        with open(args.summary, "w") as f:
+            json.dump({"label": args.label or "", "rng": generator, "rays": args.rays, "scenes": summaries}, f)
     if args.compare:
         with open(args.compare) as f:
-            if not compare_hashes(results, json.load(f)):
-                sys.exit(1)
+            reference = json.load(f)
+        if reference.get("rng", "MRG32K3A") != generator:
+            print(f"\nThe reference used the {reference.get('rng', 'MRG32K3A')} generator and this run uses "
+                  f"{generator}, so the hashes cannot match. Compare statistics with --summary instead.")
+            sys.exit(2)
+        if not compare_hashes(results, reference):
+            sys.exit(1)
 
 
 if __name__ == "__main__":

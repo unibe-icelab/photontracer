@@ -148,6 +148,10 @@ public:
      * Set whether to use complex Fresnel equations.
      * @param useComplexFresnel True to use complex Fresnel equations, false otherwise
      */
+    void setRandomNumberGenerator(RandomNumberGenerator generator);
+
+    RandomNumberGenerator getRandomNumberGenerator() const { return randomNumberGenerator_; }
+
     void setUseComplexFresnel(bool useComplexFresnel);
 
     /**
@@ -203,6 +207,7 @@ private:
     bool sbtDirty_ = false;
     bool buffersDirty_ = false;
     bool pipelineDirty_ = false;
+    RandomNumberGenerator randomNumberGenerator_ = RandomNumberGenerator::PCG32;
 
     LengthUnit lengthUnit_ = MICRO_METER;
     std::vector<Material> materials_;

@@ -7,7 +7,9 @@
 class OptixRayTracingPipeline
 {
 public:
-    OptixRayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth = 1)
+    OptixRayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm,
+                            uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator)
+        : generator_(generator)
     {
         initialize(context, materials, wavelengthUm, maxTraversableGraphDepth);
     }
@@ -32,6 +34,7 @@ private:
     CUdeviceptr missRecord_ = 0;
     CUdeviceptr hitgroupRecord_ = 0;
 
+    RandomNumberGenerator generator_; ///< selects the kernel module
     uint32_t maxTraversableGraphDepth_ = 1;
     const uint32_t maxTraceDepth_ = 1; // no recursion, we use iterative path tracing
 
@@ -52,7 +55,8 @@ private:
 class OptixVolumeFractionPipeline
 {
 public:
-    OptixVolumeFractionPipeline(const OptixDeviceContext context, uint32_t maxTraversableGraphDepth = 1)
+    OptixVolumeFractionPipeline(const OptixDeviceContext context, uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator)
+        : generator_(generator)
     {
         initialize(context, maxTraversableGraphDepth);
     }
@@ -75,6 +79,7 @@ private:
     CUdeviceptr missRecord_ = 0;
     CUdeviceptr hitgroupRecord_ = 0;
 
+    RandomNumberGenerator generator_; ///< selects the kernel module
     uint32_t maxTraversableGraphDepth_ = 1;
     const uint32_t maxTraceDepth_ = 1; // no recursion, we use iterative path tracing
 

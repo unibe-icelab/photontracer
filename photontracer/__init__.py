@@ -5,6 +5,9 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     from .photontracer_bindings import (
         is_cuda_available,
+        RandomNumberGenerator,
+        PCG32,
+        MRG32K3A,
         GeometryType,
         MESH,
         MESH_INSTANCED,
@@ -58,6 +61,9 @@ except ImportError as e:
 # Define the export surface for ``from photontracer import *``.
 __all__ = [
     'is_cuda_available',
+    'RandomNumberGenerator',
+    'PCG32',
+    'MRG32K3A',
     'GeometryType',
     'MESH',
     'MESH_INSTANCED',

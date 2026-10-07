@@ -33,14 +33,17 @@ public:
 
     virtual void buildGeometry(IGeometry &geometry) = 0;
 
+    virtual bool supportsRandomNumberGenerator(RandomNumberGenerator generator) const = 0;
+
     virtual bool hasPipeline() const = 0;
-    virtual void initializePipeline(const std::vector<Material> &materials, float wavelengthUm, uint32_t maxTraversableGraphDepth) = 0;
+    virtual void initializePipeline(const std::vector<Material> &materials, float wavelengthUm, uint32_t maxTraversableGraphDepth,
+                                    RandomNumberGenerator generator) = 0;
     virtual void updateShaderBindingTable(const std::vector<Material> &materials, float wavelengthUm) = 0;
     virtual void resetPipeline() = 0;
     virtual void launch(InputParameters &params, const IGeometry &geometry, uint3 launchShape) = 0;
 
     virtual bool hasDensityPipeline() const = 0;
-    virtual void initializeDensityPipeline(uint32_t maxTraversableGraphDepth) = 0;
+    virtual void initializeDensityPipeline(uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator) = 0;
     virtual void resetDensityPipeline() = 0;
     virtual void launchDensity(InputParametersSampleDensity &params, const IGeometry &geometry) = 0;
 };

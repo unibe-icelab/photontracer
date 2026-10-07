@@ -210,48 +210,48 @@ static __forceinline__ __device__ bool removeLastOccurence(uint32_t medium, uint
     return found;
 }
 
-static __forceinline__ __device__ RandState getRandState()
-{
-    uint32_t words[RAND_STATE_WORDS];
-    words[0] = optixGetPayload_15();
-    if constexpr (RAND_STATE_WORDS > 1)
-        words[1] = optixGetPayload_16();
-    if constexpr (RAND_STATE_WORDS > 2)
-        words[2] = optixGetPayload_17();
-    if constexpr (RAND_STATE_WORDS > 3)
-        words[3] = optixGetPayload_18();
-    if constexpr (RAND_STATE_WORDS > 4)
-        words[4] = optixGetPayload_19();
-    if constexpr (RAND_STATE_WORDS > 5)
-        words[5] = optixGetPayload_20();
-    return unpackRandState(words);
-}
-
-static __forceinline__ __device__ void setRandState(const RandState &randState)
-{
-    uint32_t words[RAND_STATE_WORDS];
-    packRandState(randState, words);
-    optixSetPayload_15(words[0]);
-    if constexpr (RAND_STATE_WORDS > 1)
-        optixSetPayload_16(words[1]);
-    if constexpr (RAND_STATE_WORDS > 2)
-        optixSetPayload_17(words[2]);
-    if constexpr (RAND_STATE_WORDS > 3)
-        optixSetPayload_18(words[3]);
-    if constexpr (RAND_STATE_WORDS > 4)
-        optixSetPayload_19(words[4]);
-    if constexpr (RAND_STATE_WORDS > 5)
-        optixSetPayload_20(words[5]);
-}
-
 static __forceinline__ __device__ float getOpticalPathLength()
 {
-    return __uint_as_float(optixGetPayload_21());
+    return __uint_as_float(optixGetPayload_15());
 }
 
 static __forceinline__ __device__ void setOpticalPathLength(const float &opl)
 {
-    optixSetPayload_21(__float_as_uint(opl));
+    optixSetPayload_15(__float_as_uint(opl));
+}
+
+// The generator state follows the optical path length, from payload value 16
+// Templates, so that the branch for the larger state is dropped, not just skipped, with the smaller one
+template <int WORDS = RAND_STATE_WORDS>
+static __forceinline__ __device__ RandState getRandState()
+{
+    uint32_t words[WORDS];
+    words[0] = optixGetPayload_16();
+    words[1] = optixGetPayload_17();
+    words[2] = optixGetPayload_18();
+    words[3] = optixGetPayload_19();
+    if constexpr (WORDS > 4)
+    {
+        words[4] = optixGetPayload_20();
+        words[5] = optixGetPayload_21();
+    }
+    return unpackRandState(words);
+}
+
+template <int WORDS = RAND_STATE_WORDS>
+static __forceinline__ __device__ void setRandState(const RandState &randState)
+{
+    uint32_t words[WORDS];
+    packRandState(randState, words);
+    optixSetPayload_16(words[0]);
+    optixSetPayload_17(words[1]);
+    optixSetPayload_18(words[2]);
+    optixSetPayload_19(words[3]);
+    if constexpr (WORDS > 4)
+    {
+        optixSetPayload_20(words[4]);
+        optixSetPayload_21(words[5]);
+    }
 }
 
 // Ray context backed by the payload registers of the current OptiX program
