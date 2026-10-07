@@ -16,7 +16,7 @@
 class Simulation
 {
 public:
-    Simulation(int gpuId = 0, int optixLoggingLevel = 1, bool enableValidationMode = false);
+    explicit Simulation(std::unique_ptr<IRaytracingBackend> backend);
     ~Simulation();
 
     /**

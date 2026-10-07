@@ -5,7 +5,7 @@
 
 #include <unordered_map>
 #include <string>
-#include <cuda_runtime.h>
+#include "portable_math.h"
 #include "photontracer.h"
 
 struct BufferDescriptor

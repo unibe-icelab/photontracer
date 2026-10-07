@@ -87,6 +87,14 @@ After building, run the tests in the build directory with:
 ctest
 ```
 
+The tests of the physics (`runHostTests`) also run on the CPU. They need neither CUDA nor a GPU, and can be built on their own with:
+
+```bash
+cmake -DPHOTONTRACER_BUILD_OPTIX=OFF -DPHOTONTRACER_BUILD_TESTS=ON ..
+```
+
+With `PHOTONTRACER_BUILD_OPTIX=OFF` no Python module is built, since there is no raytracing backend to run it with.
+
 To test the Python module, complete integration tests are available in the `photontracer/tests` directory. They can be run with pytest from the root directory:
 
 ```bash
