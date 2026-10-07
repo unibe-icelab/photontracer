@@ -29,7 +29,6 @@ Simulation::~Simulation()
     {
         optixDeviceContextDestroy(context_);
     }
-    cudaDeviceReset();
 }
 
 void Simulation::initializeContext(int gpuId, int optixLoggingLevel, bool enableValidationMode)
@@ -157,6 +156,10 @@ float Simulation::getWavelengthUm() const
 
 void Simulation::setMaterials(const std::vector<Material> &materials)
 {
+    if (materials.size() > MAX_MATERIALS)
+    {
+        throw std::invalid_argument("At most " + std::to_string(MAX_MATERIALS) + " materials are supported, got " + std::to_string(materials.size()) + ".");
+    }
     materials_ = materials;
     sbtDirty_ = true;
 }
@@ -421,6 +424,7 @@ void Simulation::run()
     {
         throw std::runtime_error("Ray generator not set. Call setRayGenerator() first.");
     }
+    geometry_->validateMaterialIds(materials_.size());
     if (!rayTracingPipeline_ || pipelineDirty_)
     {
         initializePipeline();

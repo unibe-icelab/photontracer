@@ -51,6 +51,9 @@ public:
      */
     GeometryType getType() const override;
 
+    /// Every instance material ID must refer to a configured material.
+    void validateMaterialIds(std::size_t materialCount) const override;
+
 private:
     std::vector<std::shared_ptr<IGeometry>> subGeometries;
     std::vector<float> instanceTransforms;

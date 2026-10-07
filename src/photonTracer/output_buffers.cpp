@@ -56,7 +56,7 @@ OutputBuffers::~OutputBuffers()
     {
         if (buffer.second.devicePtr)
         {
-            OTK_ERROR_CHECK(cudaFree(buffer.second.devicePtr));
+            cudaFree(buffer.second.devicePtr); // a destructor must not throw
         }
     }
     buffers_.clear();

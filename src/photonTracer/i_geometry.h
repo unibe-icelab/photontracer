@@ -3,6 +3,7 @@
 
 #pragma once
 #include <string>
+#include <cstddef>
 #include <optix.h>
 #include <cuda_runtime.h>
 #include "photontracer.h"
@@ -53,6 +54,16 @@ public:
      * @return A string representing the type of geometry.
      */
     virtual GeometryType getType() const = 0;
+
+    /**
+     * @brief Throws std::invalid_argument if the geometry refers to a material that does not exist.
+     *
+     * @param materialCount Number of configured materials.
+     */
+    virtual void validateMaterialIds(std::size_t materialCount) const
+    {
+        (void)materialCount;
+    }
 
     /**
      * @brief Returns the traversable handle for the acceleration structure.

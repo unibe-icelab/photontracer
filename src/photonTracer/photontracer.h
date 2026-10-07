@@ -104,6 +104,8 @@ struct Material
     MaterialProperties properties; // Properties of the material
 };
 
+constexpr uint32_t MAX_MATERIALS = 16; // the medium index is stored in 4 bits
+
 
 enum class OutputType
 {
@@ -210,7 +212,7 @@ struct MissData
 
 struct HitGroupData
 {
-    Material materials[16]; // Array of refractive indices for each material
+    Material materials[MAX_MATERIALS]; // Array of refractive indices for each material
     float wavelengthUm;
 };
 

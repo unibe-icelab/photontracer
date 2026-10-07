@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <chrono>
+#include <stdexcept>
+#include <string>
 #include <span>
 #include <cassert>
 
@@ -27,6 +29,24 @@ InstanceGeometry::InstanceGeometry(
       instanceTransforms(std::move(instanceTransforms)),
       particleTypeIds(std::move(particleTypeIds)),
       materialIds(std::move(materialIds)) {}
+
+void InstanceGeometry::validateMaterialIds(std::size_t materialCount) const
+{
+    for (unsigned int materialId : materialIds)
+    {
+        if (materialId >= materialCount)
+        {
+            throw std::invalid_argument("Instance material ID " + std::to_string(materialId) + " is out of range for " + std::to_string(materialCount) + " configured materials.");
+        }
+    }
+    for (const auto &subGeometry : subGeometries)
+    {
+        if (subGeometry && subGeometry->getType() == MESH_INSTANCED)
+        {
+            subGeometry->validateMaterialIds(materialCount);
+        }
+    }
+}
 
 void InstanceGeometry::freeDeviceMemory()
 {

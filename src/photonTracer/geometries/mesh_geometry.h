@@ -42,6 +42,8 @@ public:
      */
     GeometryType getType() const override;
 
+    void validateMaterialIds(std::size_t materialCount) const override;
+
 private:
     std::vector<float3> vertices;      ///< Vertex positions of the mesh
     std::vector<unsigned int> indices; ///< Indices defining the mesh triangle faces
