@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <chrono>
+#include <stdexcept>
+#include <string>
 
 #include <optix.h>
 #include <optix_stubs.h>
@@ -25,6 +27,14 @@ void MeshGeometry::build(OptixDeviceContext &context)
         traversableHandle, dGeometryBuffer, compact);
     accelerationStructureBuilt = true;
 }
+void MeshGeometry::validateMaterialIds(std::size_t materialCount) const
+{
+    if (materialCount < 2)
+    {
+        throw std::invalid_argument("A MeshGeometry needs at least 2 materials (0: outside, 1: inside), got " + std::to_string(materialCount) + ".");
+    }
+}
+
 GeometryType MeshGeometry::getType() const
 {
     return MESH;

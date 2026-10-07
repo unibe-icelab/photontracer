@@ -701,9 +701,9 @@ extern "C" __global__ void __closesthit__ch()
     }
 
 #if !defined(NDEBUG)
-    if (instanceId < 0 || instanceId >= 15)
+    if (instanceId >= MAX_MATERIALS)
     {
-        printf("Error: instanceId %u out of bounds [0, 15]\n", instanceId);
+        printf("Error: instanceId %u out of bounds [0, 16)\n", instanceId);
         RayState state = getRayState();
         state.absorbed = 3;
         state.done = 1;
@@ -794,9 +794,9 @@ extern "C" __global__ void __closesthit__ch()
 
     RayState state = getRayState();
 #if !defined(NDEBUG)
-    if (state.currentMedium < 0 || state.currentMedium >= 15)
+    if (state.currentMedium >= MAX_MATERIALS)
     {
-        printf("Error: current medium index %d out of bounds [0, 15]\n", state.currentMedium);
+        printf("Error: current medium index %u out of bounds [0, 16)\n", state.currentMedium);
         state.absorbed = 3;
         state.done = 1;
         setRayState(state);
@@ -1018,9 +1018,9 @@ extern "C" __global__ void __closesthit__ch()
             }
         }
 #if !defined(NDEBUG)
-        if (nextMedium < 0 || nextMedium >= 15)
+        if (nextMedium >= MAX_MATERIALS)
         {
-            printf("Error: next medium index %d out of bounds [0, 15]\n", nextMedium);
+            printf("Error: next medium index %u out of bounds [0, 16)\n", nextMedium);
             state.absorbed = 3;
             state.done = 1;
             setRayState(state);

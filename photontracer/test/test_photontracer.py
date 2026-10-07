@@ -81,6 +81,62 @@ def test_dense_mesh_reflection(subdivisions, compact):
     assert np.allclose(k_out[reflected], [k[0], 0, -k[2]], atol=1e-5)
 
 
+def _box_simulation(materials, geometry=None):
+    sim = Simulation(gpu_id=0)
+    box = trimesh.creation.box(extents=[2, 2, 2])
+    sim.geometry = geometry or MeshGeometry(box.vertices, box.faces)
+    sim.wavelength_um = 1.0
+    sim.materials = materials
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=100, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.5)
+    sim.outputs = [OutputType.SCATTERING_COUNT]
+    return sim
+
+
+def _materials(count):
+    """Vacuum followed by glass materials."""
+    return [Material(MaterialType.REFRACTIVE, 1 + 0j)] + [Material(MaterialType.REFRACTIVE, 1.5 + 0j)] * (count - 1)
+
+
+def _instances(material_id):
+    sphere = trimesh.creation.icosphere(radius=1.0, subdivisions=1)
+    return InstanceGeometry([MeshGeometry(sphere.vertices, sphere.faces)],
+                            np.eye(4, dtype=np.float32)[None, :3, :], [0], [material_id])
+
+
+def test_too_many_materials_are_rejected():
+    sim = Simulation(gpu_id=0)
+    with pytest.raises(ValueError, match="materials"):
+        sim.materials = _materials(17)
+
+
+def test_mesh_needs_two_materials():
+    with pytest.raises(ValueError, match="material"):
+        _box_simulation(_materials(1)).run()
+
+
+@pytest.mark.parametrize("material_id, count", [(2, 2), (5, 2), (16, 16)])
+def test_instance_material_id_out_of_range_is_rejected(material_id, count):
+    with pytest.raises(ValueError, match="material"):
+        _box_simulation(_materials(count), _instances(material_id)).run()
+
+
+def test_last_material_id_is_supported():
+    sim = _box_simulation(_materials(16), _instances(15))
+    sim.run()
+    assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[0] == 2
+
+
+def test_simulation_survives_destruction_of_another():
+    first = _box_simulation(_materials(2))
+    first.run()
+    second = _box_simulation(_materials(2))
+    second.run()
+    del second
+    before = first.get_output_buffer(OutputType.SCATTERING_COUNT).copy()
+    first.run()
+    assert (first.get_output_buffer(OutputType.SCATTERING_COUNT) == before).all()
+
+
 def test_circular_polarization_at_normal():
     sim = Simulation(gpu_id=0)
     angle_deg = 0
