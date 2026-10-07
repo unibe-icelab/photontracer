@@ -342,7 +342,7 @@ void Simulation::initializePipeline()
     {
         throw std::runtime_error("Wavelength not set. Call setWavelengthUm() first.");
     }
-    rayTracingPipeline_ = std::make_unique<RayTracingPipeline>(context_, materials_, wavelengthUm_, maxNestedGeometryLevels_);
+    rayTracingPipeline_ = std::make_unique<OptixRayTracingPipeline>(context_, materials_, wavelengthUm_, maxNestedGeometryLevels_);
 }
 
 void Simulation::initializePipelineDensity()
@@ -355,7 +355,7 @@ void Simulation::initializePipelineDensity()
     {
         throw std::runtime_error("Geometry not set. Call setGeometry() first.");
     }
-    densityPipeline_ = std::make_unique<VolumeFractionPipeline>(context_, maxNestedGeometryLevels_);
+    densityPipeline_ = std::make_unique<OptixVolumeFractionPipeline>(context_, maxNestedGeometryLevels_);
 }
 
 void Simulation::allocateOutputBuffers(const uint3 launchShape)

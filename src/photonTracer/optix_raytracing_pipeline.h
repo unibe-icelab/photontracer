@@ -4,14 +4,14 @@
 #include <optix.h>
 #include "photontracer.h"
 
-class RayTracingPipeline
+class OptixRayTracingPipeline
 {
 public:
-    RayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth = 1)
+    OptixRayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth = 1)
     {
         initialize(context, materials, wavelengthUm, maxTraversableGraphDepth);
     }
-    ~RayTracingPipeline();
+    ~OptixRayTracingPipeline();
 
     void updateShaderBindingTable(const std::vector<Material> materials, const float wavelengthUm);
 
@@ -49,14 +49,14 @@ private:
     void cleanupShaderBindingTable();
 };
 
-class VolumeFractionPipeline
+class OptixVolumeFractionPipeline
 {
 public:
-    VolumeFractionPipeline(const OptixDeviceContext context, uint32_t maxTraversableGraphDepth = 1)
+    OptixVolumeFractionPipeline(const OptixDeviceContext context, uint32_t maxTraversableGraphDepth = 1)
     {
         initialize(context, maxTraversableGraphDepth);
     }
-    ~VolumeFractionPipeline();
+    ~OptixVolumeFractionPipeline();
 
     void launch(InputParametersSampleDensity &params);
 

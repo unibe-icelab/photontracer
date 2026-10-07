@@ -32,7 +32,7 @@ embed_cuda(
 pybind11_add_module( photontracer_bindings 
   photontracer_bindings.cpp
   simulation.cpp
-  raytracing_pipeline.cpp
+  optix_raytracing_pipeline.cpp
   raytracing_output.cpp 
   output_buffers.cpp
   )

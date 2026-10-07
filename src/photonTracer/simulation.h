@@ -10,7 +10,7 @@
 #include <memory>
 #include "i_geometry.h"
 #include "ray_generator.h"
-#include "raytracing_pipeline.h"
+#include "optix_raytracing_pipeline.h"
 #include "raytracing_output.h"
 #include "output_buffers.h"
 
@@ -250,8 +250,8 @@ private:
     uint32_t healpixHistogramBins_ = 0;
 
     void updateHealpixBufferShape();
-    std::unique_ptr<RayTracingPipeline> rayTracingPipeline_;
-    std::unique_ptr<VolumeFractionPipeline> densityPipeline_;
+    std::unique_ptr<OptixRayTracingPipeline> rayTracingPipeline_;
+    std::unique_ptr<OptixVolumeFractionPipeline> densityPipeline_;
 
     std::shared_ptr<RayTracingOutput> rayTracingResult_;
     std::unique_ptr<OutputBuffers> outputBuffers_;
