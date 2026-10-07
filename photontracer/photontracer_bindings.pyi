@@ -328,6 +328,8 @@ class MeshGeometry(IGeometry):
             array of length ``3*T``, any integer dtype (cast to ``uint32``
             internally).  Each row/triple gives the three vertex indices of
             one triangle.
+        compact: Compact the acceleration structure after building to save
+            device memory (default ``True``).
 
     Example::
 
@@ -340,7 +342,7 @@ class MeshGeometry(IGeometry):
     """
 
     def __init__(self, vertices: NDArray[numpy.floating],
-                 indices: NDArray[numpy.integer]) -> None: ...
+                 indices: NDArray[numpy.integer], compact: bool = ...) -> None: ...
 
 
 class InstanceGeometry(IGeometry):

@@ -1,5 +1,6 @@
 import numpy as np
 import trimesh
+import pytest
 from photontracer import LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, OutputType
 
 def test_reflection_angle():
@@ -52,6 +53,32 @@ def test_reflection_angle():
     
     print(stokes_up.mean(axis=0))
     assert stokes_up.mean(axis=0)[1] < 0, "Stokes vector Q should be positive on average"
+
+
+@pytest.mark.parametrize("compact", [True, False])
+@pytest.mark.parametrize("subdivisions", [0, 6])
+def test_dense_mesh_reflection(subdivisions, compact):
+    # A finely subdivided slab must behave like the 12-triangle one, with or without compaction.
+    sim = Simulation(gpu_id=0)
+    k = np.array([-np.sin(np.pi / 4), 0, -np.cos(np.pi / 4)])
+    slab = trimesh.creation.box(extents=[10, 10, 1],
+                                transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    for _ in range(subdivisions):
+        slab = slab.subdivide()
+
+    sim.wavelength_um = 1
+    sim.stokes_vector = [1, 0, 0, 0]
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces, compact=compact)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1+0j), Material(MaterialType.REFRACTIVE, 1.5+0j)]
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=10000, origin=-k, direction=k, offset_radius=3)
+    sim.outputs = [OutputType.SCATTERING_COUNT, OutputType.LAST_DIRECTION]
+    sim.run()
+
+    k_out = sim.get_output_buffer(OutputType.LAST_DIRECTION)
+    count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
+    reflected = (count == 1) & (k_out[:, 2] > 0)
+    assert reflected.any()
+    assert np.allclose(k_out[reflected], [k[0], 0, -k[2]], atol=1e-5)
 
 
 def test_circular_polarization_at_normal():
