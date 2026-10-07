@@ -6,7 +6,6 @@
 
 #include <optix.h>
 #include <optix_device.h>
-#include <curand_kernel.h>
 #include <cstdint>
 
 #include "photontracer.h"
@@ -43,7 +42,7 @@ static __forceinline__ __device__ void traceRay(
     unsigned int qDirPayLoad[3];
     unsigned int statePayload;
     unsigned int mediumHistoryPayload;
-    unsigned int curandStatePayload[6];
+    unsigned int randStatePayload[6] = {}; // words beyond RAND_STATE_WORDS stay unused
     unsigned int oplLastSegmentPayload = __float_as_uint(0.0f);
 
     packFloat3(rayData.direction, dirPayload);
@@ -54,7 +53,7 @@ static __forceinline__ __device__ void traceRay(
     statePayload = packRayState(rayData.state);
     mediumHistoryPayload = rayData.packedMediumHistory;
 
-    packCuRandStateMRG32k3a(&rayData.randState, curandStatePayload);
+    packRandState(rayData.randState, randStatePayload);
 
     OptixRayFlags rayFlags = OPTIX_RAY_FLAG_NONE;
 
@@ -75,8 +74,8 @@ static __forceinline__ __device__ void traceRay(
         stokPayload[0], stokPayload[1], stokPayload[2], stokPayload[3],
         qDirPayLoad[0], qDirPayLoad[1], qDirPayLoad[2],
         statePayload, mediumHistoryPayload,
-        curandStatePayload[0], curandStatePayload[1], curandStatePayload[2],
-        curandStatePayload[3], curandStatePayload[4], curandStatePayload[5],
+        randStatePayload[0], randStatePayload[1], randStatePayload[2],
+        randStatePayload[3], randStatePayload[4], randStatePayload[5],
         oplLastSegmentPayload);
 
     rayData.direction = unpackFloat3(dirPayload);
@@ -87,7 +86,7 @@ static __forceinline__ __device__ void traceRay(
     double oplLastSegment = static_cast<double>(__uint_as_float(oplLastSegmentPayload));
     rayData.opticalPathLength += oplLastSegment;
     rayData.packedMediumHistory = mediumHistoryPayload;
-    rayData.randState = unpackCuRandStateMRG32k3a(curandStatePayload);
+    rayData.randState = unpackRandState(randStatePayload);
 }
 
 static __forceinline__ __device__ void traceDensity(
@@ -142,9 +141,8 @@ extern "C" __global__ void __raygen__rg()
 
     uint32_t idx = ptLinearizeLaunchIndex(idx3, launchDims);
 
-    curandStateMRG32k3a curandState;
-    curand_init(params.initSeed, idx, 0, &curandState);
-    auto nextSample = [&curandState]() { return curand_uniform(&curandState); };
+    RandState randState = randInit(params.initSeed, idx);
+    auto nextSample = [&randState]() { return randNext(randState); };
 
     float3 rayOrigin, incidentRayDirection;
     if (!computeRay(params.rayGeneratorType, params.rayGeneratorData, nextSample, idx3, idx, rayOrigin, incidentRayDirection))
@@ -159,7 +157,7 @@ extern "C" __global__ void __raygen__rg()
     initializeLightTraceRay(
         params.outputFlags, params.deviceOutputBuffers, idx, rayOrigin, incidentRayDirection,
         params.stokesVector, params.qMinusAxisSeed, nextSample, prd, stokesIn, initialQMinusAxis);
-    prd.randState = curandState;
+    prd.randState = randState;
 
     uint32_t scatteringCount = 0;
 
@@ -205,10 +203,9 @@ extern "C" __global__ void __raygen__density()
 
     uint32_t idx = idx3.x;
 
-    curandStateMRG32k3a curandState;
-    curand_init(paramsDensity.initSeed, idx, 0, &curandState);
+    RandState randState = randInit(paramsDensity.initSeed, idx);
 
-    auto nextSample = [&curandState]() { return curand_uniform(&curandState); };
+    auto nextSample = [&randState]() { return randNext(randState); };
 
     float3 rayOrigin = computeDensitySampleOrigin(paramsDensity.boxMin, paramsDensity.boxMax, nextSample);
     float3 incidentRayDirection;
@@ -341,13 +338,13 @@ extern "C" __global__ void __closesthit__ch()
         hit.back = temp;
     }
 
-    curandStateMRG32k3a curandState = getCuRandStateMRG32k3a();
-    auto nextSample = [&curandState]() { return curand_uniform(&curandState); };
+    RandState randState = getRandState();
+    auto nextSample = [&randState]() { return randNext(randState); };
 
     OptixPayloadRayContext ctx;
     handleMaterialHit(ctx, hit, *hgData, params.lengthScale, params.useComplexFresnel, nextSample);
 
-    setCuRandStateMRG32k3a(curandState);
+    setRandState(randState);
 }
 
 extern "C" __global__ void __closesthit__density()
