@@ -1,9 +1,8 @@
 // This source code is licensed under the BSD-3 license found in the LICENSE file in the root directory of this source tree.
 // © 2024-2026, University of Bern, Space Research and Planetary Sciences, Physics Institute, Rafael Ottersberg
 
-#include <OptiXToolkit/ShaderUtil/vec_math.h>
-#include <OptiXToolkit/ShaderUtil/Transform4.h>
-#include "complex_f.cuh"
+#include "portable_math.h"
+#include "complex_f.h"
 
 #ifndef FRESNEL_H
 #define FRESNEL_H
@@ -11,8 +10,6 @@
 #ifndef M_PIf
 #define M_PIf 3.14159265358979323846f
 #endif
-
-#if defined(__CUDACC__)
 
 /**
  * @brief Calculate the absorption coefficient
@@ -23,7 +20,7 @@
  *
  * @return The absorption coefficient
  */
-__forceinline__ __host__ __device__ float absorptionCoefficientFromk(float const &k, float const &wavelengthUm, float const &lengthScale)
+PT_INLINE PT_HD float absorptionCoefficientFromk(float const &k, float const &wavelengthUm, float const &lengthScale)
 {
     return (4.0f * M_PIf * k) / (wavelengthUm * lengthScale);
 }
@@ -40,7 +37,7 @@ __forceinline__ __host__ __device__ float absorptionCoefficientFromk(float const
  *
  * @return Ray is absorbed
  */
-__forceinline__ __host__ __device__ bool calculateAbsorption(
+PT_INLINE PT_HD bool calculateAbsorption(
     const float &maxDistance, const float &wavelengthUm, const float &lengthScale, const float &k, const float &randomSample, float &travelledDistance)
 {
     // travelledDistance = maxDistance;
@@ -74,7 +71,7 @@ __forceinline__ __host__ __device__ bool calculateAbsorption(
  *
  * @return Ray is absorbed/scattered
  */
-__forceinline__ __host__ __device__ bool calculateDistance(
+PT_INLINE PT_HD bool calculateDistance(
     const float &maxDistance, const float &extinctionCoefficient, const float &randomSample, float &travelledDistance)
 {
     // travelledDistance = maxDistance;
@@ -96,7 +93,7 @@ __forceinline__ __host__ __device__ bool calculateDistance(
     }
 }
 
-__forceinline__ __host__ __device__ float3 henyeyGreensteinDirection(float3 const& directionIn, float g, float rndSample1, float rndSample2){
+PT_INLINE PT_HD float3 henyeyGreensteinDirection(float3 const& directionIn, float g, float rndSample1, float rndSample2){
     float cosTheta;
     if (fabsf(g) < 1e-6f) {
         cosTheta = 1.0f - 2.0f * rndSample1;
@@ -130,7 +127,7 @@ __forceinline__ __host__ __device__ float3 henyeyGreensteinDirection(float3 cons
  *
  * @return The angle of rotation of the stokes vector in radians
  */
-__forceinline__ __host__ __device__ float unsignedAngleBetweenVectors(
+PT_INLINE PT_HD float unsignedAngleBetweenVectors(
     const float3 vector1, const float3 vector2)
 {
     float cosThetha = otk::dot(vector1, vector2);
@@ -148,7 +145,7 @@ __forceinline__ __host__ __device__ float unsignedAngleBetweenVectors(
  *
  * @return The signed angle of rotation from vector1 to vector2 about the axis in radians
  */
-__forceinline__ __host__ __device__ float signedRotationAboutAxis(
+PT_INLINE PT_HD float signedRotationAboutAxis(
     const float3 &axis,
     const float3 &vector1,
     const float3 &vector2)
@@ -169,7 +166,7 @@ __forceinline__ __host__ __device__ float signedRotationAboutAxis(
  *
  * @return The reflectivity
  */
-__forceinline__ __host__ __device__ float calculateReflectivitySchlick(float cosTheta, float na, float nb)
+PT_INLINE PT_HD float calculateReflectivitySchlick(float cosTheta, float na, float nb)
 {
     float r0 = (na - nb) / (na + nb);
     r0 = r0 * r0;
@@ -188,7 +185,7 @@ __forceinline__ __host__ __device__ float calculateReflectivitySchlick(float cos
  * @param[out] cosThetaPrime Angle of refraction
  * @param[out] totalInternalReflection Whether total internal reflection occurs
  */
-__forceinline__ __host__ __device__ void calculateSnellsLaw(
+PT_INLINE PT_HD void calculateSnellsLaw(
     const float3 &direction, const float3 &normal, const float &na, const float &nb,
     float &cosTheta, float &cosThetaPrime, bool &totalInternalReflection)
 {
@@ -221,7 +218,7 @@ __forceinline__ __host__ __device__ void calculateSnellsLaw(
  *
  * @return A random lambertian direction as a unit vector
  */
-__forceinline__ __host__ __device__ float3 calculateLamberianDirection(
+PT_INLINE PT_HD float3 calculateLamberianDirection(
     float randomNumber1, float randomNumber2, const float3 &normal)
 {
     float theta = 2.0f * M_PIf * randomNumber1;     // Azimuthal angle
@@ -247,7 +244,7 @@ __forceinline__ __host__ __device__ float3 calculateLamberianDirection(
  *
  * @return The direction of the refracted ray
  */
-__forceinline__ __host__ __device__ float3 calculateRefractedDirection(
+PT_INLINE PT_HD float3 calculateRefractedDirection(
     const float3 &direction, const float3 &normal,
     const float &cosTheta, const float &cosThetaPrime,
     const float &na, const float &nb)
@@ -266,7 +263,7 @@ __forceinline__ __host__ __device__ float3 calculateRefractedDirection(
  *
  * @return The direction of the reflected ray
  */
-__forceinline__ __host__ __device__ float3 calculateReflectedDirection(
+PT_INLINE PT_HD float3 calculateReflectedDirection(
     const float3 &direction, const float3 &normal)
 {
     return direction - 2.0f * otk::dot(direction, normal) * normal;
@@ -280,7 +277,7 @@ __forceinline__ __host__ __device__ float3 calculateReflectedDirection(
  *
  * @param[out] scatteringPlaneNormal The normal of the scattering plane as a unit vector or [NAN, NAN, NAN] if the ray is (anti-)parallel to the normal
  */
-__forceinline__ __host__ __device__ void scatteringPlaneNormalAxis(
+PT_INLINE PT_HD void scatteringPlaneNormalAxis(
     const float3 &k, const float3 &surfaceNormal,
     float3 &scatteringPlaneNormal)
 {
@@ -303,7 +300,7 @@ __forceinline__ __host__ __device__ void scatteringPlaneNormalAxis(
  *
  * @return The rotation matrix as a Transform4
  */
-__forceinline__ __host__ __device__ otk::Transform4 calculateRotationMatrix(float omega)
+PT_INLINE PT_HD otk::Transform4 calculateRotationMatrix(float omega)
 {
     if (omega == 0.0f)
     {
@@ -334,7 +331,7 @@ __forceinline__ __host__ __device__ otk::Transform4 calculateRotationMatrix(floa
  *
  * @return The Muller matrix as a Transform4
  */
-__forceinline__ __host__ __device__ otk::Transform4 calculateMullerTotalReflection(
+PT_INLINE PT_HD otk::Transform4 calculateMullerTotalReflection(
     const float &cosThetaA, const float &na, const float &nb)
 {
     // Light Scattering Reviews: Light scattering from particulate surfaces in  geometrical optics approximation, Grynko & Skuratov 2008
@@ -378,7 +375,7 @@ __forceinline__ __host__ __device__ otk::Transform4 calculateMullerTotalReflecti
  *
  * @return The Muller matrix as a Transform4
  */
-__forceinline__ __host__ __device__ otk::Transform4 calculateMullerReflection(
+PT_INLINE PT_HD otk::Transform4 calculateMullerReflection(
     const float &cosThetaA, const float &cosThetaB, const float &na, const float &nb)
 {
     // Light Scattering Reviews: Light scattering from particulate surfaces in  geometrical optics approximation, Grynko & Skuratov 2008
@@ -415,7 +412,7 @@ __forceinline__ __host__ __device__ otk::Transform4 calculateMullerReflection(
  *
  * @return The Muller matrix as a Transform4
  */
-__forceinline__ __host__ __device__ otk::Transform4 calculateMullerTransmission(
+PT_INLINE PT_HD otk::Transform4 calculateMullerTransmission(
     const float &cosThetaA, const float &cosThetaB, const float &na, const float &nb)
 {
     // Light Scattering Reviews: Light scattering from particulate surfaces in  geometrical optics approximation, Grynko & Skuratov 2008
@@ -456,7 +453,7 @@ __forceinline__ __host__ __device__ otk::Transform4 calculateMullerTransmission(
  * @param[in] nB The refractive index of the medium the refracted ray will be in
  * @param[in] randomSample A random number between 0 and 1
  */
-__host__ __device__ bool calculateFresnelInteraction(
+PT_HD bool calculateFresnelInteraction(
     float4 &stokesVector, float3 &qMinusAxis,
     float3 &direction, const float3 &surfaceNormal,
     const float &nA, const float &nB, const float &randomSample)
@@ -514,7 +511,7 @@ __host__ __device__ bool calculateFresnelInteraction(
 }
 
 
-static __forceinline__ __host__ __device__ uint32_t packMediumHistory(uint32_t mediumHistory[8])
+static PT_INLINE PT_HD uint32_t packMediumHistory(uint32_t mediumHistory[8])
 {
     uint32_t packedMediumHistory = 0;
     for (int i = 0; i < 8; ++i)
@@ -524,7 +521,7 @@ static __forceinline__ __host__ __device__ uint32_t packMediumHistory(uint32_t m
     return packedMediumHistory;
 }
 
-static __forceinline__ __host__ __device__ void unpackMediumHistory(uint32_t packedMediumHistory, uint32_t mediumHistory[8])
+static PT_INLINE PT_HD void unpackMediumHistory(uint32_t packedMediumHistory, uint32_t mediumHistory[8])
 {
     for (int i = 0; i < 8; ++i)
     {
@@ -532,7 +529,7 @@ static __forceinline__ __host__ __device__ void unpackMediumHistory(uint32_t pac
     }
 }
 
-static __forceinline__ __host__ __device__ uint32_t getMediumFromPacked(uint32_t packedMediumHistory, uint32_t index)
+static PT_INLINE PT_HD uint32_t getMediumFromPacked(uint32_t packedMediumHistory, uint32_t index)
 {
     if (index >= 8)
     {
@@ -541,7 +538,7 @@ static __forceinline__ __host__ __device__ uint32_t getMediumFromPacked(uint32_t
     return (packedMediumHistory >> (index * 4)) & 0xF;
 }
 
-static __forceinline__ __host__ __device__ bool appendMediumPacked(uint32_t medium, uint32_t &mediumHistorySize, uint32_t &packedMediumHistory)
+static PT_INLINE PT_HD bool appendMediumPacked(uint32_t medium, uint32_t &mediumHistorySize, uint32_t &packedMediumHistory)
 {
     if (mediumHistorySize >= 8)
     {
@@ -552,7 +549,7 @@ static __forceinline__ __host__ __device__ bool appendMediumPacked(uint32_t medi
     return true;
 }
 
-static __forceinline__ __host__ __device__ bool removeLastOccurencePacked(uint32_t medium, uint32_t &mediumHistorySize, uint32_t &packedMediumHistory)
+static PT_INLINE PT_HD bool removeLastOccurencePacked(uint32_t medium, uint32_t &mediumHistorySize, uint32_t &packedMediumHistory)
 {
     if (mediumHistorySize == 0)
     {
@@ -587,7 +584,7 @@ static __forceinline__ __host__ __device__ bool removeLastOccurencePacked(uint32
  *
  * @return The Muller matrix as a Transform4
  */
-__forceinline__ __host__ __device__ otk::Transform4 calculateMullerReflection(
+PT_INLINE PT_HD otk::Transform4 calculateMullerReflection(
     const float &cosThetaI, const float &cosThetaT, 
     const Complexf &na, const Complexf &nb)
 {
@@ -642,7 +639,7 @@ __forceinline__ __host__ __device__ otk::Transform4 calculateMullerReflection(
  *
  * @return The Muller matrix as a Transform4
  */
-__forceinline__ __host__ __device__ otk::Transform4 calculateMullerTransmission(
+PT_INLINE PT_HD otk::Transform4 calculateMullerTransmission(
     const float &cosThetaI, const float &cosThetaT, const Complexf &na, const Complexf &nb)
 {
     // Muinonen et al. 1996, Väsanien et al. 2018 (thetha = psi, homogeneous wave treatment)
@@ -680,7 +677,7 @@ __forceinline__ __host__ __device__ otk::Transform4 calculateMullerTransmission(
  * @param[in] nB The refractive index of the medium the refracted ray will be in
  * @param[in] randomSample A random number between 0 and 1
  */
-__host__ __device__ bool calculateFresnelInteraction(
+PT_HD bool calculateFresnelInteraction(
     float4 &stokesVector, float3 &qMinusAxis,
     float3 &direction, const float3 &surfaceNormal,
     const Complexf &nA, const Complexf &nB, const float &randomSample)
@@ -785,5 +782,4 @@ __host__ __device__ bool calculateFresnelInteraction(
     }
 }
 
-#endif
 #endif

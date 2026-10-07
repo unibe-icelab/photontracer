@@ -6,7 +6,7 @@
 #include <array>
 #include <limits>
 
-#include "../photonTracer/light_scattering.cuh"
+#include "../photonTracer/light_scattering.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

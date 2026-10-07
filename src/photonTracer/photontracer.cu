@@ -15,8 +15,8 @@
 #include <OptiXToolkit/ShaderUtil/vec_math.h>
 #include <OptiXToolkit/ShaderUtil/SelfIntersectionAvoidance.h>
 #include "logging.cuh"
-#include "light_scattering.cuh"
-#include "complex_f.cuh"
+#include "light_scattering.h"
+#include "complex_f.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
