@@ -11,4 +11,5 @@ int buildGasFromMesh(
     std::vector<float3> &meshVertices,
     std::vector<uint32_t> &meshIndices,
     OptixDeviceContext &context,
-    OptixTraversableHandle &gasHandle, CUdeviceptr &dGasOutputBuffer);
+    OptixTraversableHandle &gasHandle, CUdeviceptr &dGasOutputBuffer,
+    bool compact = true);

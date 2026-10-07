@@ -358,7 +358,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
              "Free device-side acceleration structure buffers owned by this geometry.");
 
     py::class_<MeshGeometry, IGeometry, std::shared_ptr<MeshGeometry>>(m, "MeshGeometry")
-        .def(py::init([](py::array_t<float> vertices, py::array_t<unsigned int> indices)
+        .def(py::init([](py::array_t<float> vertices, py::array_t<unsigned int> indices, bool compact)
                       {
         // Validate vertices array
         if (vertices.ndim() != 2) {
@@ -423,8 +423,8 @@ PYBIND11_MODULE(photontracer_bindings, m)
             }
         }
         
-        return std::make_shared<MeshGeometry>(std::move(vertex_vec), std::move(index_vec)); }),
-             py::arg("vertices"), py::arg("indices"));
+        return std::make_shared<MeshGeometry>(std::move(vertex_vec), std::move(index_vec), compact); }),
+             py::arg("vertices"), py::arg("indices"), py::arg("compact") = true);
 
     // For InstanceGeometry with numpy arrays
     py::class_<InstanceGeometry, IGeometry, std::shared_ptr<InstanceGeometry>>(m, "InstanceGeometry")
