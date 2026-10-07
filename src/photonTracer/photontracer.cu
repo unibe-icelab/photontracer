@@ -17,6 +17,8 @@
 #include "logging.cuh"
 #include "light_scattering.h"
 #include "material_hit.h"
+#include "ray_generation.h"
+#include "light_trace.h"
 #include "complex_f.h"
 
 #ifndef M_PI
@@ -27,255 +29,6 @@ extern "C"
 {
     __constant__ InputParameters params;
     __constant__ InputParametersSampleDensity paramsDensity;
-}
-
-static constexpr float TWOPI = 2.0f * M_PI;
-static constexpr float INV_HALF_PI = 2.0f / M_PI; // 1 / (0.5 * PI)
-
-__device__ __forceinline__ int floor_to_int(float x)
-{
-    return __float2int_rd(x); // round toward -inf, matches std::floor for floats
-}
-
-__device__ __forceinline__ int healpix_ang2pix_ring(int nside, const float3 d)
-{
-    const float z = d.z;
-    const float za = fabsf(z);
-
-    float phi = atan2f(d.y, d.x);
-    if (phi < 0.0f)
-        phi += TWOPI;
-
-    // tt spans [0,4)
-    const float tt = phi * INV_HALF_PI;
-
-    const int nl2 = 2 * nside;
-    const int nl4 = 4 * nside;
-    const int ncap = nl2 * (nside - 1);
-
-    int ipix = 0;
-
-    if (za <= 2.0f / 3.0f)
-    {
-        const float temp1 = nside * (0.5f + tt);
-        const float temp2 = nside * (z * 0.75f);
-
-        const int jp = floor_to_int(temp1 - temp2);
-        const int jm = floor_to_int(temp1 + temp2);
-
-        const int ir = nside + 1 + jp - jm;
-        const int kshift = 1 - (ir & 1);
-
-        int ip = (jp + jm - nside + kshift + 1) >> 1;
-        ip = (ip % nl4 + nl4) % nl4; // safe wrap
-
-        ipix = ncap + (ir - 1) * nl4 + ip;
-    }
-    else
-    {
-        const float tp = tt - floorf(tt); // fractional part in [0,1)
-        const float tmp = nside * sqrtf(3.0f * (1.0f - za));
-
-        int jp = floor_to_int(tp * tmp) + 1;
-        int jm = floor_to_int((1.0f - tp) * tmp) + 1;
-        const int ir = jp + jm - 1;
-        const int ip = floor_to_int(tt * ir);
-
-        if (z > 0.0f)
-            ipix = 2 * ir * (ir - 1) + ip;
-        else
-            ipix = 12 * nside * nside - 2 * ir * (ir + 1) + ip;
-    }
-
-    return ipix;
-}
-
-static __forceinline__ __device__ void computeRayParallel(float3 &origin, float3 &direction, curandStateMRG32k3a *curandState)
-{
-    auto parallel_ray_gen_data = params.rayGeneratorData.parallel;
-    origin = parallel_ray_gen_data.origin;
-    direction = parallel_ray_gen_data.direction;
-    float sourceRadius = parallel_ray_gen_data.offsetRadius;
-
-    // Compute orthogonal vectors u and v
-    float3 u = make_float3(0.0f, 1.0f, 0.0f);
-    if (fabsf(direction.y) > 0.999f)
-    {
-        u = make_float3(1.0f, 0.0f, 0.0f);
-    }
-    u = otk::normalize(otk::cross(direction, u));
-    float3 v = otk::normalize(otk::cross(direction, u));
-
-    float x, y;
-    do
-    {
-        x = 2.0f * curand_uniform(curandState) - 1.0f;
-        y = 2.0f * curand_uniform(curandState) - 1.0f;
-    } while (x * x + y * y > 1.0f);
-
-    origin += sourceRadius * (x * u + y * v);
-}
-
-// alternative method for isotropic ray generation: closer to SIRIS4
-/*
-static __forceinline__ __device__ void computeRayIsotropic(float3 &origin, float3 &direction, curandStateMRG32k3a *curandState)
-{
-    auto isotropic_ray_gen_data = params.rayGeneratorData.isotropic;
-    origin = isotropic_ray_gen_data.center;
-    float offsetRadius = isotropic_ray_gen_data.offsetRadius;
-
-    // sample isotropic incoming direction d (mui uniform in [-1,1], phi uniform)
-    float r = curand_uniform(curandState);
-    float mui = 1.0f - 2.0f * r; // cos(theta)
-    float phii = 2.0f * M_PI * curand_uniform(curandState);
-    float nui = sqrtf(fmaxf(0.0f, 1.0f - mui * mui));
-    float3 d;
-    d.x = nui * cosf(phii);
-    d.y = nui * sinf(phii);
-    d.z = mui;
-    d = otk::normalize(d); // unit vector pointing toward particle center
-
-    // sample impact parameter uniformly in disk: r0 = offsetRadius * sqrt(U), phi0 uniform
-    float r0 = offsetRadius * sqrtf(curand_uniform(curandState));
-    float phi0 = 2.0f * M_PI * curand_uniform(curandState);
-
-    // canonical start point (in canonical frame where canonical direction = +z)
-    float3 X0;
-    float x0 = r0 * cosf(phi0);
-    float y0 = r0 * sinf(phi0);
-    float z0 = -sqrtf(fmaxf(0.0f, offsetRadius * offsetRadius - r0 * r0));
-    X0.x = x0;
-    X0.y = y0;
-    X0.z = z0;
-
-    // rotate X0 from canonical +z frame so that +z -> d (Rodrigues rotation)
-    // handle near-parallel and antiparallel cases
-    float3 zaxis = make_float3(0.0f, 0.0f, 1.0f);
-    float cosTheta = d.z; // dot(zaxis, d)
-    float absCos = fabsf(cosTheta);
-
-    float3 Xrot;
-    if (absCos > 0.999999f)
-    {
-        // almost parallel: identity or 180 deg
-        if (cosTheta > 0.0f)
-        {
-            Xrot = X0; // +z -> +z
-        }
-        else
-        {
-            // 180 degree rotation around X
-            Xrot.x = X0.x;
-            Xrot.y = -X0.y;
-            Xrot.z = -X0.z;
-        }
-    }
-    else
-    {
-        // general Rodrigues rotation: rotate by angle theta around axis k = z x d / |z x d|
-        float3 k = make_float3(
-            zaxis.y * d.z - zaxis.z * d.y,
-            zaxis.z * d.x - zaxis.x * d.z,
-            zaxis.x * d.y - zaxis.y * d.x);
-        float s = sqrtf(k.x * k.x + k.y * k.y + k.z * k.z);
-        k.x /= s;
-        k.y /= s;
-        k.z /= s;
-        float sinTheta = s; // |z x d| = sin(theta)
-        // Rodrigues: v_rot = v*cosθ + (k x v)*sinθ + k*(k·v)*(1-cosθ)
-        float3 kxv = make_float3(
-            k.y * X0.z - k.z * X0.y,
-            k.z * X0.x - k.x * X0.z,
-            k.x * X0.y - k.y * X0.x);
-        float kdotv = k.x * X0.x + k.y * X0.y + k.z * X0.z;
-        Xrot.x = X0.x * cosTheta + kxv.x * sinTheta + k.x * kdotv * (1.0f - cosTheta);
-        Xrot.y = X0.y * cosTheta + kxv.y * sinTheta + k.y * kdotv * (1.0f - cosTheta);
-        Xrot.z = X0.z * cosTheta + kxv.z * sinTheta + k.z * kdotv * (1.0f - cosTheta);
-    }
-
-    // set origin and direction in particle coordinates
-    origin = isotropic_ray_gen_data.center + Xrot;
-    direction = d; // points inward toward particle center (same as Fortran KEOUT)
-}
-ß*/
-
-static __forceinline__ __device__ void computeRayIsotropicMC(float3 &origin, float3 &direction, curandStateMRG32k3a *curandState)
-{
-    auto isotropic_ray_gen_data = params.rayGeneratorData.isotropic;
-    origin = isotropic_ray_gen_data.center;
-    float sourceRadius = isotropic_ray_gen_data.sourceRadius;
-    float offsetRadius = isotropic_ray_gen_data.offsetRadius;
-
-    // Sample a point on the sphere of radius sourceRadius
-    float x, y, z;
-    do
-    {
-        x = 2.0f * curand_uniform(curandState) - 1.0f;
-        y = 2.0f * curand_uniform(curandState) - 1.0f;
-        z = 2.0f * curand_uniform(curandState) - 1.0f;
-    } while (x * x + y * y + z * z > 1.0f);
-
-    direction = otk::normalize(make_float3(x, y, z)); // Uniformly distributed on the unit sphere, outward pointing
-
-    origin += sourceRadius * direction;
-
-    // Compute orthogonal vectors u and v
-    float3 u = make_float3(0.0f, 1.0f, 0.0f);
-    if (fabsf(direction.y) > 0.999f)
-    {
-        u = make_float3(1.0f, 0.0f, 0.0f);
-    }
-    u = otk::normalize(otk::cross(direction, u));
-    float3 v = otk::normalize(otk::cross(direction, u));
-
-    do
-    {
-        x = 2.0f * curand_uniform(curandState) - 1.0f;
-        y = 2.0f * curand_uniform(curandState) - 1.0f;
-    } while (x * x + y * y > 1.0f);
-
-    origin += offsetRadius * (x * u + y * v);
-    direction = -direction; // Pointing inward
-}
-
-static __forceinline__ __device__ void computeRayCamera(float3 &origin, float3 &direction, curandStateMRG32k3a *curandState, uint32_t launchIndex)
-{
-    auto camera = params.rayGeneratorData.camera;
-    unsigned int samplesPerPixel = camera.samplesPerPixel > 0 ? camera.samplesPerPixel : 1;
-    unsigned int imageWidth = camera.imageWidth > 0 ? camera.imageWidth : 1;
-    unsigned int imageHeight = camera.imageHeight > 0 ? camera.imageHeight : 1;
-    unsigned int pixelIndex = launchIndex / samplesPerPixel;
-    const unsigned int pixelCount = imageWidth * imageHeight;
-    if (pixelCount == 0)
-    {
-        pixelIndex = 0;
-    }
-    else if (pixelIndex >= pixelCount)
-    {
-        pixelIndex = pixelCount - 1;
-    }
-    unsigned int pixelX = pixelIndex % imageWidth;
-    unsigned int pixelY = pixelIndex / imageWidth;
-
-    float offsetX = curand_uniform(curandState) - 0.5f;
-    float offsetY = curand_uniform(curandState) - 0.5f;
-
-    float3 pixelSample = camera.pixel00;
-    pixelSample += (static_cast<float>(pixelX) + offsetX) * camera.pixelDeltaU;
-    pixelSample += (static_cast<float>(pixelY) + offsetY) * camera.pixelDeltaV;
-
-    origin = camera.center;
-    if (camera.enableDefocus)
-    {
-        float angle = 2.0f * M_PI * curand_uniform(curandState);
-        float radius = sqrtf(curand_uniform(curandState));
-        float x = cosf(angle) * radius;
-        float y = sinf(angle) * radius;
-        float3 defocusOffset = x * camera.defocusDiskU + y * camera.defocusDiskV;
-        origin += defocusOffset;
-    }
-
-    direction = otk::normalize(pixelSample - origin);
 }
 
 static __forceinline__ __device__ void traceRay(
@@ -391,120 +144,22 @@ extern "C" __global__ void __raygen__rg()
 
     curandStateMRG32k3a curandState;
     curand_init(params.initSeed, idx, 0, &curandState);
+    auto nextSample = [&curandState]() { return curand_uniform(&curandState); };
 
-    // Map our launch idx to a screen location and create a ray from the camera
     float3 rayOrigin, incidentRayDirection;
-    if (params.rayGeneratorType == RAYGEN_PARALLEL)
-    {
-        computeRayParallel(rayOrigin, incidentRayDirection, &curandState);
-    }
-    else if (params.rayGeneratorType == RAYGEN_ISOTROPIC)
-    {
-        computeRayIsotropicMC(rayOrigin, incidentRayDirection, &curandState);
-    }
-    else if (params.rayGeneratorType == RAYGEN_CAMERA)
-    {
-        auto camera = params.rayGeneratorData.camera;
-        const unsigned int samplesPerPixel = camera.samplesPerPixel > 0 ? camera.samplesPerPixel : 1;
-        const unsigned int imageWidth = camera.imageWidth > 0 ? camera.imageWidth : 1;
-        const unsigned int imageHeight = camera.imageHeight > 0 ? camera.imageHeight : 1;
-
-        unsigned int sampleIndex = idx3.x;
-        unsigned int pixelX = idx3.y;
-        unsigned int pixelY = idx3.z;
-
-        if (sampleIndex >= samplesPerPixel)
-        {
-            sampleIndex = samplesPerPixel - 1;
-        }
-        if (pixelX >= imageWidth)
-        {
-            pixelX = imageWidth - 1;
-        }
-        if (pixelY >= imageHeight)
-        {
-            pixelY = imageHeight - 1;
-        }
-
-        const uint32_t pixelIndex = pixelY * imageWidth + pixelX;
-        idx = pixelIndex * samplesPerPixel + sampleIndex;
-
-        computeRayCamera(rayOrigin, incidentRayDirection, &curandState, idx);
-    }
-    else
+    if (!computeRay(params.rayGeneratorType, params.rayGeneratorData, nextSample, idx3, idx, rayOrigin, incidentRayDirection))
     {
         printf("Error: Unknown ray generator type\n");
         return;
     }
 
-    if (params.outputFlags & OUT_SOURCE_POSITION)
-    {
-        params.deviceOutputBuffers.sourcePosition[idx] = rayOrigin;
-    }
-    if (params.outputFlags & OUT_SOURCE_DIRECTION)
-    {
-        params.deviceOutputBuffers.sourceDirection[idx] = incidentRayDirection;
-    }
-
-    // prepare the payload
     OptixRayData prd;
-    // Trace the ray against our scene hierarchy
-    prd.direction = incidentRayDirection;
-    prd.origin = rayOrigin;
-    prd.packedMediumHistory = 0;
-
-    auto stokesSetting = params.stokesVector;
-    float4 stokesIn = stokesSetting;
-    if (isnan(stokesSetting.y) || isnan(stokesSetting.z))
-    {
-        // random full linear polarization
-        // random azimuthal angle psi in [0, pi]
-        float rnd = curand_uniform(&curandState);
-        float psi = M_PI * rnd;
-        stokesIn.y = cosf(2.0f * psi);
-        stokesIn.z = sinf(2.0f * psi);
-    }
-    else if (isnan(stokesSetting.w))
-    {
-        // random circular polarization
-        float rnd = curand_uniform(&curandState);
-        stokesIn.w = cosf(2.0f * M_PI * rnd);
-    }
-
-    prd.stokesVector = stokesIn;
-    auto k = incidentRayDirection;
-
+    float4 stokesIn;
     float3 initialQMinusAxis;
-    if (!isnan(params.qMinusAxisSeed.x))
-    {
-        initialQMinusAxis = otk::normalize(params.qMinusAxisSeed - otk::dot(params.qMinusAxisSeed, k) * k); // project and normalize
-    }
-    if (isnan(params.qMinusAxisSeed.x) || !isfinite(initialQMinusAxis.x))
-    { // not set or k ≈ qMinusAxis: choose e_x or e_y as seed
-        float3 up = make_float3(1.0f, 0.0f, 0.0f);
-        initialQMinusAxis = otk::normalize(up - otk::dot(up, k) * k); // project and normalize
-        if (!isfinite(initialQMinusAxis.x))
-        { // k ≈ up: choose orthonormal e_y as seed
-            up = make_float3(0.0f, 1.0f, 0.0f);
-            initialQMinusAxis = otk::normalize(up - otk::dot(up, k) * k);
-        }
-    }
-
-    if (params.outputFlags & OUT_Q_MINUS_AXIS_IN)
-    {
-        params.deviceOutputBuffers.qMinusAxisIn[idx] = initialQMinusAxis;
-    }
-
-    prd.qMinusAxis = initialQMinusAxis;
+    initializeLightTraceRay(
+        params.outputFlags, params.deviceOutputBuffers, idx, rayOrigin, incidentRayDirection,
+        params.stokesVector, params.qMinusAxisSeed, nextSample, prd, stokesIn, initialQMinusAxis);
     prd.randState = curandState;
-    prd.opticalPathLength = 0.0;
-
-    prd.state.numberOfWarnings = 0;
-    prd.state.absorbed = 0;
-    prd.state.done = 0;
-
-    prd.state.currentMedium = 0;
-    prd.state.currentMediumHistorySize = 0;
 
     uint32_t scatteringCount = 0;
 
@@ -537,80 +192,9 @@ extern "C" __global__ void __raygen__rg()
     DBG_LOG_INT("Absorbed state", prd.state.absorbed);
     DBG_LOG_INT("Final scatteringCount", scatteringCount);
 
-    // check if buffer is allocated
-    if (params.outputFlags & OUT_LAST_DIRECTION)
-    {
-        params.deviceOutputBuffers.lastDirection[idx] = prd.direction;
-    }
-    if (params.outputFlags & OUT_LAST_POSITION)
-    {
-        params.deviceOutputBuffers.lastPosition[idx] = prd.origin;
-    }
-    if (params.outputFlags & OUT_RAY_STATE)
-    {
-        params.deviceOutputBuffers.ray_state[idx] = prd.state.absorbed;
-    }
-    if (params.outputFlags & OUT_LAST_MEDIUM_ID)
-    {
-        params.deviceOutputBuffers.lastMediumID[idx] = prd.state.currentMedium;
-    }
-    if (params.outputFlags & OUT_SCATTERING_COUNT)
-    {
-        params.deviceOutputBuffers.scatteringCount[idx] = scatteringCount;
-    }
-    if (params.outputFlags & OUT_NUMBER_OF_WARNINGS)
-    {
-        params.deviceOutputBuffers.numberOfWarnings[idx] = prd.state.numberOfWarnings;
-    }
-    if (params.outputFlags & OUT_STOKES_VECTOR)
-    {
-        float3 qMinusAxisScPlane;
-        float4 rotatedStokesVector;
-        scatteringPlaneNormalAxis(incidentRayDirection, prd.direction, qMinusAxisScPlane);
-        if (!isnan(qMinusAxisScPlane.x))
-        {
-            float omega = signedRotationAboutAxis(prd.direction, prd.qMinusAxis, qMinusAxisScPlane);
-            otk::Transform4 stokesRotationMatrix = calculateRotationMatrix(omega);
-            rotatedStokesVector = stokesRotationMatrix * prd.stokesVector;
-        }
-        else
-        {
-            rotatedStokesVector = prd.stokesVector;
-        }
-
-        params.deviceOutputBuffers.stokesVector[idx] = rotatedStokesVector;
-    }
-    if (params.outputFlags & OUT_STOKES_VECTOR_IN)
-    {
-        float4 initialStokes = stokesIn;
-        float3 qMinusAxisScPlane;
-        float4 rotatedStokesVector;
-
-        scatteringPlaneNormalAxis(incidentRayDirection, prd.direction, qMinusAxisScPlane);
-        if (!isnan(qMinusAxisScPlane.x))
-        {
-            float omega = signedRotationAboutAxis(incidentRayDirection, initialQMinusAxis, qMinusAxisScPlane);
-            otk::Transform4 stokesRotationMatrix = calculateRotationMatrix(omega);
-            rotatedStokesVector = stokesRotationMatrix * initialStokes;
-        }
-        else
-        {
-            rotatedStokesVector = initialStokes;
-        }
-
-        params.deviceOutputBuffers.stokesVectorIn[idx] = rotatedStokesVector;
-    }
-    if (params.outputFlags & OUT_OPTICAL_PATH_LENGTH)
-    {
-        params.deviceOutputBuffers.opticalPathLength[idx] = prd.opticalPathLength;
-    }
-    if (params.outputFlags & OUT_SCATTERING_ANGLE)
-    {
-        float cosTheta = otk::dot(incidentRayDirection, prd.direction);
-        cosTheta = fmaxf(fminf(cosTheta, 1.0f), -1.0f); // Clamp to [-1, 1]
-        float scatteringAngle = acosf(cosTheta);
-        params.deviceOutputBuffers.scatteringAngle[idx] = scatteringAngle;
-    }
+    writeMainTraceOutputs(
+        params.outputFlags, params.deviceOutputBuffers, idx, prd,
+        incidentRayDirection, stokesIn, initialQMinusAxis, scatteringCount);
 }
 
 extern "C" __global__ void __raygen__density()
@@ -624,18 +208,10 @@ extern "C" __global__ void __raygen__density()
     curandStateMRG32k3a curandState;
     curand_init(paramsDensity.initSeed, idx, 0, &curandState);
 
-    // Map our launch idx to a screen location and create a ray from the camera
-    float3 rayOrigin, incidentRayDirection;
-    float r1 = curand_uniform(&curandState);
-    float r2 = curand_uniform(&curandState);
-    float r3 = curand_uniform(&curandState);
+    auto nextSample = [&curandState]() { return curand_uniform(&curandState); };
 
-    float3 boxSize = paramsDensity.boxMax - paramsDensity.boxMin;
-
-    rayOrigin.x = r1 * boxSize.x + paramsDensity.boxMin.x;
-    rayOrigin.y = r2 * boxSize.y + paramsDensity.boxMin.y;
-    rayOrigin.z = r3 * boxSize.z + paramsDensity.boxMin.z;
-
+    float3 rayOrigin = computeDensitySampleOrigin(paramsDensity.boxMin, paramsDensity.boxMax, nextSample);
+    float3 incidentRayDirection;
     incidentRayDirection = make_float3(0.0f, 0.0f, 1.0f);
 
     // prepare the payload
@@ -667,7 +243,7 @@ extern "C" __global__ void __miss__ms()
         float3 dir = getRayDirection();
         dir = otk::normalize(dir);
 
-        const int healpixBinIdx = healpix_ang2pix_ring(static_cast<int>(params.healpixNside), dir);
+        const int healpixBinIdx = healpixAng2PixRing(static_cast<int>(params.healpixNside), dir);
         const uint32_t pixelX = optixGetLaunchIndex().y;
         const uint32_t pixelY = optixGetLaunchIndex().z;
         const uint32_t pixelCountX = optixGetLaunchDimensions().y;
