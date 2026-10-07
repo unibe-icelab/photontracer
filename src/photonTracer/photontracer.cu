@@ -30,6 +30,7 @@ extern "C"
     __constant__ InputParametersSampleDensity paramsDensity;
 }
 
+template <int WORDS = RAND_STATE_WORDS>
 static __forceinline__ __device__ void traceRay(
     OptixTraversableHandle handle,
     OptixRayData &rayData,
@@ -42,7 +43,7 @@ static __forceinline__ __device__ void traceRay(
     unsigned int qDirPayLoad[3];
     unsigned int statePayload;
     unsigned int mediumHistoryPayload;
-    unsigned int randStatePayload[6] = {}; // words beyond RAND_STATE_WORDS stay unused
+    unsigned int randStatePayload[WORDS];
     unsigned int oplLastSegmentPayload = __float_as_uint(0.0f);
 
     packFloat3(rayData.direction, dirPayload);
@@ -57,26 +58,53 @@ static __forceinline__ __device__ void traceRay(
 
     OptixRayFlags rayFlags = OPTIX_RAY_FLAG_NONE;
 
-    optixTrace(
-        handle,
-        rayData.origin,
-        rayData.direction,
-        tmin,                     // Min intersection distance
-        tmax,                     // Max intersection distance
-        0.0f,                     // rayTime -- used for motion blur
-        OptixVisibilityMask(255), // Specify always visible
-        rayFlags,
-        0, // SBT offset   -- See SBT discussion
-        1, // SBT stride   -- See SBT discussion
-        0, // missSBTIndex -- See SBT discussion
-        origPayload[0], origPayload[1], origPayload[2],
-        dirPayload[0], dirPayload[1], dirPayload[2],
-        stokPayload[0], stokPayload[1], stokPayload[2], stokPayload[3],
-        qDirPayLoad[0], qDirPayLoad[1], qDirPayLoad[2],
-        statePayload, mediumHistoryPayload,
-        randStatePayload[0], randStatePayload[1], randStatePayload[2],
-        randStatePayload[3], randStatePayload[4], randStatePayload[5],
-        oplLastSegmentPayload);
+    // The payload is origin, direction, Stokes vector, Q- axis, ray state, medium history,
+    // optical path length and the state of the random number generator (see payload_layout.h)
+    if constexpr (WORDS == PCG32_PAYLOAD_WORDS)
+    {
+        optixTrace(
+            handle,
+            rayData.origin,
+            rayData.direction,
+            tmin,                     // Min intersection distance
+            tmax,                     // Max intersection distance
+            0.0f,                     // rayTime -- used for motion blur
+            OptixVisibilityMask(255), // Specify always visible
+            rayFlags,
+            0, // SBT offset   -- See SBT discussion
+            1, // SBT stride   -- See SBT discussion
+            0, // missSBTIndex -- See SBT discussion
+            origPayload[0], origPayload[1], origPayload[2],
+            dirPayload[0], dirPayload[1], dirPayload[2],
+            stokPayload[0], stokPayload[1], stokPayload[2], stokPayload[3],
+            qDirPayLoad[0], qDirPayLoad[1], qDirPayLoad[2],
+            statePayload, mediumHistoryPayload,
+            oplLastSegmentPayload,
+            randStatePayload[0], randStatePayload[1], randStatePayload[2], randStatePayload[3]);
+    }
+    else
+    {
+        optixTrace(
+            handle,
+            rayData.origin,
+            rayData.direction,
+            tmin,
+            tmax,
+            0.0f,
+            OptixVisibilityMask(255),
+            rayFlags,
+            0,
+            1,
+            0,
+            origPayload[0], origPayload[1], origPayload[2],
+            dirPayload[0], dirPayload[1], dirPayload[2],
+            stokPayload[0], stokPayload[1], stokPayload[2], stokPayload[3],
+            qDirPayLoad[0], qDirPayLoad[1], qDirPayLoad[2],
+            statePayload, mediumHistoryPayload,
+            oplLastSegmentPayload,
+            randStatePayload[0], randStatePayload[1], randStatePayload[2],
+            randStatePayload[3], randStatePayload[4], randStatePayload[5]);
+    }
 
     rayData.direction = unpackFloat3(dirPayload);
     rayData.origin = unpackFloat3(origPayload);

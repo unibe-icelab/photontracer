@@ -92,6 +92,9 @@ __all__ = [
     "CameraRayGenerator",
     "Simulation",
     "is_cuda_available",
+    "RandomNumberGenerator",
+    "PCG32",
+    "MRG32K3A",
 ]
 
 
@@ -201,6 +204,41 @@ class MaterialType:
     REFLECTIVE: MaterialType
     VOLUME_SCATTERING: MaterialType
     __members__: dict[str, MaterialType]
+
+    def __eq__(self, other: typing.Any) -> bool: ...
+
+    def __hash__(self) -> int: ...
+
+    def __init__(self, value: int) -> None: ...
+
+    def __int__(self) -> int: ...
+
+    def __repr__(self) -> str: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def value(self) -> int: ...
+
+
+class RandomNumberGenerator:
+    """Enum selecting the random number generator of the ray tracing kernels.
+
+    Assign one of these values to :attr:`Simulation.random_number_generator`.
+    Both give the same results statistically, but not ray by ray.
+
+    Members:
+
+    * ``PCG32`` – PCG32, the default. Cheap to seed, which matters most for
+      scenes with little physics per ray.
+    * ``MRG32K3A`` – curand's MRG32k3a, the generator of the 1.0 releases.
+      Use it to reproduce results of those releases ray by ray (CUDA only).
+    """
+
+    PCG32: RandomNumberGenerator
+    MRG32K3A: RandomNumberGenerator
+    __members__: dict[str, RandomNumberGenerator]
 
     def __eq__(self, other: typing.Any) -> bool: ...
 
@@ -1159,12 +1197,27 @@ class Simulation:
         """Initial seed for the on-device random number generator.
 
         Changing the seed produces statistically independent simulation runs
-        for variance estimation.  Default ``0``.
+        for variance estimation.  The same seed gives the same rays when run
+        again with the same build and :attr:`random_number_generator`.
+        Default ``0``.
         """
         ...
 
     @seed.setter
     def seed(self, value: int) -> None: ...
+
+    @property
+    def random_number_generator(self) -> RandomNumberGenerator:
+        """Random number generator of the ray tracing kernels.
+
+        ``PCG32`` (default) or ``MRG32K3A``, the curand generator of the 1.0
+        releases. Changing it rebuilds the ray tracing pipeline on the next
+        :meth:`run`.
+        """
+        ...
+
+    @random_number_generator.setter
+    def random_number_generator(self, value: RandomNumberGenerator) -> None: ...
 
     @property
     def use_complex_fresnel(self) -> bool:
@@ -1249,6 +1302,9 @@ DIFFUSE: MaterialType
 REFRACTIVE: MaterialType
 REFLECTIVE: MaterialType
 VOLUME_SCATTERING: MaterialType
+
+PCG32: RandomNumberGenerator
+MRG32K3A: RandomNumberGenerator
 
 MESH: GeometryType
 MESH_INSTANCED: GeometryType

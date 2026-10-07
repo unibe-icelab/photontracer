@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file.
 - Allocate and copy the output buffers through the raytracing backend instead of calling CUDA from `Simulation`
 - Move the OptiX acceleration structures out of the geometry classes into the OptiX backend, which also fixes a crash when two simulations share one geometry
 - Add the CMake option `PHOTONTRACER_BUILD_OPTIX` (default on); with it off, CUDA is not needed and only the CPU tests are built. A CI job runs them without a GPU
+- Use PCG32 as the default random number generator of the OptiX kernels. It is much cheaper to seed than curand's MRG32k3a, which makes scenes with little physics per ray far faster and heavy ones about 15% faster. Results agree statistically with the 1.0 releases but not ray by ray. `Simulation.random_number_generator` selects between `PCG32` and `MRG32K3A` (the curand generator of the 1.0 releases) at run time
+- Add statistical tests of the generator (Fresnel reflectance, diffuse albedo, uniformity of the isotropic source, seed reproducibility), and `--summary` / `--compare-summary` in `benchmarks/golden.py` to compare the statistics of two builds
 - Compact mesh acceleration structures after building, controlled by the new `compact` argument of `MeshGeometry` (default on)
 
 ## 1.0.2 - 18-03-2026

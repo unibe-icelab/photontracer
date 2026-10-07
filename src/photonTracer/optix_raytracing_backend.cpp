@@ -189,9 +189,10 @@ OptixTraversableHandle OptixRaytracingBackend::traversableHandle(const IGeometry
     return static_cast<const OptixAccelerationStructure *>(geometry.getAccelerationStructure())->handle;
 }
 
-void OptixRaytracingBackend::initializePipeline(const std::vector<Material> &materials, float wavelengthUm, uint32_t maxTraversableGraphDepth)
+void OptixRaytracingBackend::initializePipeline(const std::vector<Material> &materials, float wavelengthUm, uint32_t maxTraversableGraphDepth,
+                                                RandomNumberGenerator generator)
 {
-    pipeline_ = std::make_unique<OptixRayTracingPipeline>(context_, materials, wavelengthUm, maxTraversableGraphDepth);
+    pipeline_ = std::make_unique<OptixRayTracingPipeline>(context_, materials, wavelengthUm, maxTraversableGraphDepth, generator);
 }
 
 void OptixRaytracingBackend::updateShaderBindingTable(const std::vector<Material> &materials, float wavelengthUm)
@@ -205,9 +206,9 @@ void OptixRaytracingBackend::launch(InputParameters &params, const IGeometry &ge
     pipeline_->launch(params, launchShape);
 }
 
-void OptixRaytracingBackend::initializeDensityPipeline(uint32_t maxTraversableGraphDepth)
+void OptixRaytracingBackend::initializeDensityPipeline(uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator)
 {
-    densityPipeline_ = std::make_unique<OptixVolumeFractionPipeline>(context_, maxTraversableGraphDepth);
+    densityPipeline_ = std::make_unique<OptixVolumeFractionPipeline>(context_, maxTraversableGraphDepth, generator);
 }
 
 void OptixRaytracingBackend::launchDensity(InputParametersSampleDensity &params, const IGeometry &geometry)

@@ -3,16 +3,60 @@
 
 #pragma once
 
-#include <curand_kernel.h>
 #include <cstdint>
+
+#include "payload_layout.h"
 
 // The random number generator of the OptiX programs: its state, how a ray's generator is
 // seeded and drawn from, and how the state travels in the payload between programs.
+// PHOTONTRACER_RNG_PCG32 is the default; PHOTONTRACER_RNG_MRG32K3A is curand's MRG32k3a,
+// the generator of the 1.0 releases.
+
+#if defined(PHOTONTRACER_RNG_PCG32)
+
+#include "pcg32_rng.h"
+
+using RandState = Pcg32State;
+
+/// Number of 32-bit payload words that hold a RandState
+constexpr int RAND_STATE_WORDS = PCG32_PAYLOAD_WORDS;
+
+/// State of the generator of one ray; `sequence` is the linear launch index
+__device__ __forceinline__ RandState randInit(unsigned int seed, unsigned int sequence)
+{
+    return makePcg32(seed, sequence);
+}
+
+/// Uniform number in (0, 1]
+__device__ __forceinline__ float randNext(RandState &state)
+{
+    return state.nextFloat();
+}
+
+__device__ __forceinline__ void packRandState(const RandState &state, uint32_t *words)
+{
+    words[0] = static_cast<uint32_t>(state.state);
+    words[1] = static_cast<uint32_t>(state.state >> 32);
+    words[2] = static_cast<uint32_t>(state.inc);
+    words[3] = static_cast<uint32_t>(state.inc >> 32);
+}
+
+__device__ __forceinline__ RandState unpackRandState(const uint32_t *words)
+{
+    RandState state;
+    state.state = static_cast<uint64_t>(words[1]) << 32 | words[0];
+    state.inc = static_cast<uint64_t>(words[3]) << 32 | words[2];
+    return state;
+}
+
+#elif defined(PHOTONTRACER_RNG_MRG32K3A)
+
+#include <curand_kernel.h>
 
 using RandState = curandStateMRG32k3a;
 
 /// Number of 32-bit payload words that hold a RandState
-constexpr int RAND_STATE_WORDS = 6;
+constexpr int RAND_STATE_WORDS = MRG32K3A_PAYLOAD_WORDS;
 
 /// State of the generator of one ray; `sequence` is the linear launch index
 __device__ __forceinline__ RandState randInit(unsigned int seed, unsigned int sequence)
@@ -56,3 +100,7 @@ __device__ __forceinline__ RandState unpackRandState(const uint32_t *words)
 
     return state;
 }
+
+#else
+#error "Define PHOTONTRACER_RNG_PCG32 or PHOTONTRACER_RNG_MRG32K3A"
+#endif

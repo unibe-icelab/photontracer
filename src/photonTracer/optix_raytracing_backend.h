@@ -33,14 +33,17 @@ public:
 
     void buildGeometry(IGeometry &geometry) override;
 
+    bool supportsRandomNumberGenerator(RandomNumberGenerator) const override { return true; }
+
     bool hasPipeline() const override { return pipeline_ != nullptr; }
-    void initializePipeline(const std::vector<Material> &materials, float wavelengthUm, uint32_t maxTraversableGraphDepth) override;
+    void initializePipeline(const std::vector<Material> &materials, float wavelengthUm, uint32_t maxTraversableGraphDepth,
+                            RandomNumberGenerator generator) override;
     void updateShaderBindingTable(const std::vector<Material> &materials, float wavelengthUm) override;
     void resetPipeline() override { pipeline_.reset(); }
     void launch(InputParameters &params, const IGeometry &geometry, uint3 launchShape) override;
 
     bool hasDensityPipeline() const override { return densityPipeline_ != nullptr; }
-    void initializeDensityPipeline(uint32_t maxTraversableGraphDepth) override;
+    void initializeDensityPipeline(uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator) override;
     void resetDensityPipeline() override { densityPipeline_.reset(); }
     void launchDensity(InputParametersSampleDensity &params, const IGeometry &geometry) override;
 

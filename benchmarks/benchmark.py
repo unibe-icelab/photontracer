@@ -21,6 +21,7 @@ import time
 import numpy as np
 import trimesh
 
+import photontracer
 from photontracer import (InstanceGeometry, Material, MaterialType, MeshGeometry,
                           OutputType, ParallelRayGenerator, Simulation)
 
@@ -70,9 +71,11 @@ def gpu_memory_mb():
     return None
 
 
-def run_scene(name, rays, repeats, grid):
+def run_scene(name, rays, repeats, grid, rng):
     geometry, generator, kwargs = instances_scene(grid) if name == "instances" else SCENES[name]()
     sim = Simulation(gpu_id=0)
+    if rng:
+        sim.random_number_generator = getattr(photontracer.RandomNumberGenerator, rng)
     sim.geometry = geometry
     sim.materials = MATERIALS
     sim.wavelength_um = 1.0
@@ -103,10 +106,16 @@ def run_scene(name, rays, repeats, grid):
         "mrays_per_s": round(rays / median / 1e3, 2),
         "gpu_memory_mb": memory,
         "mean_scattering_count": float(sim.get_output_buffer(OutputType.SCATTERING_COUNT).mean()),
+        "rng": generator_of(sim),
     }
 
 
-def environment(label):
+def generator_of(sim):
+    """Name of the generator of a simulation; builds before 1.1 only have curand."""
+    return sim.random_number_generator.name if hasattr(sim, "random_number_generator") else "MRG32K3A"
+
+
+def environment(label, generator):
     try:
         commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
                                 cwd=os.path.dirname(os.path.abspath(__file__))).stdout.strip()
@@ -114,7 +123,7 @@ def environment(label):
                              capture_output=True, text=True).stdout.splitlines()[0]
     except (OSError, IndexError):
         commit, gpu = "", ""
-    return {"label": label or commit, "commit": commit, "gpu": gpu,
+    return {"label": label or commit, "rng": generator, "commit": commit, "gpu": gpu,
             "python": platform.python_version(), "platform": platform.platform()}
 
 
@@ -122,14 +131,19 @@ def compare(results, baseline, tolerance):
     """Print the change against a baseline file; return True if nothing regressed."""
     old = {r["scene"]: r for r in baseline["results"]}
     ok = True
+    generator = results[0]["rng"]
+    other_generator = baseline["environment"].get("rng", "MRG32K3A") != generator
     print(f"\nCompared with baseline {baseline['environment'].get('label', '?')} ({baseline['environment'].get('gpu', '?')})")
+    if other_generator:
+        print(f"The baseline used the {baseline['environment'].get('rng', 'MRG32K3A')} generator and this build uses "
+              f"{generator}: the scattering counts only need to agree to 1%.")
     for r in results:
         b = old.get(r["scene"])
         if b is None:
             print(f"  {r['scene']:<10} no baseline")
             continue
         change = r["median_ms"] / b["median_ms"] - 1
-        same = np.isclose(r["mean_scattering_count"], b["mean_scattering_count"], rtol=1e-6)
+        same = np.isclose(r["mean_scattering_count"], b["mean_scattering_count"], rtol=1e-2 if other_generator else 1e-6)
         flags = ("  SLOWER" if change > tolerance else "") + ("" if same else "  RESULT CHANGED")
         ok &= change <= tolerance and same
         print(f"  {r['scene']:<10} {b['median_ms']:9.1f} -> {r['median_ms']:9.1f} ms ({change:+.1%}){flags}")
@@ -139,6 +153,7 @@ def compare(results, baseline, tolerance):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scene", action="append", choices=SCENES, help="scene to run (default: all)")
+    parser.add_argument("--rng", choices=["PCG32", "MRG32K3A"], help="random number generator (default: that of the build)")
     parser.add_argument("--rays", type=int, default=10_000_000, help="rays per scene")
     parser.add_argument("--grid", type=int, default=68, help="instances scene: spheres per side (grid**3 instances)")
     parser.add_argument("--repeats", type=int, default=5, help="timed runs after the first")
@@ -151,12 +166,12 @@ def main():
     results = []
     print(f"{'scene':<10} {'first [ms]':>10} {'median [ms]':>12} {'Mrays/s':>9} {'GPU [MB]':>9}  mean scatter")
     for name in args.scene or SCENES:
-        r = run_scene(name, args.rays, args.repeats, args.grid)
+        r = run_scene(name, args.rays, args.repeats, args.grid, args.rng)
         results.append(r)
         print(f"{name:<10} {r['first_run_ms']:>10.1f} {r['median_ms']:>12.1f} {r['mrays_per_s']:>9.2f} "
               f"{r['gpu_memory_mb'] or float('nan'):>9.0f}  {r['mean_scattering_count']:.4f}")
 
-    report = {"environment": environment(args.label), "results": results}
+    report = {"environment": environment(args.label, results[0]["rng"]), "results": results}
     if args.output:
         with open(args.output, "w") as f:
             json.dump(report, f, indent=2)

@@ -20,6 +20,7 @@ endif()
 add_executable(runHostTests
   test_light_scattering_host.cpp
   test_material_hit.cpp
+  test_pcg32.cpp
   test_ray_generation.cpp)
 
 target_compile_definitions(runHostTests PRIVATE PHOTONTRACER_NO_CUDA)

@@ -108,6 +108,11 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .value("MESH_INSTANCED", MESH_INSTANCED)
         .export_values();
 
+    py::enum_<RandomNumberGenerator>(m, "RandomNumberGenerator")
+        .value("PCG32", RandomNumberGenerator::PCG32)
+        .value("MRG32K3A", RandomNumberGenerator::MRG32K3A)
+        .export_values();
+
     py::enum_<LengthUnit>(m, "LengthUnit")
         .value("MICRO_METER", LengthUnit::MICRO_METER)
         .value("MILLI_METER", LengthUnit::MILLI_METER)
@@ -722,6 +727,8 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def_property_readonly("max_sub_geometries", &Simulation::getMaxSubGeometries, "Get the maximum number of sub-geometries allowed in an InstanceGeometry.")
         .def_property_readonly("max_mesh_triangles", &Simulation::getMaxMeshTriangles, "Get the maximum number of triangles allowed in a MeshGeometry.")
         .def_property("seed", &Simulation::getInitSeed, &Simulation::setInitSeed, "Get or set the initial seed for random number generation.")
+        .def_property("random_number_generator", &Simulation::getRandomNumberGenerator, &Simulation::setRandomNumberGenerator,
+                      "Get or set the random number generator of the kernels. PCG32 is the default; MRG32K3A is the curand generator of the 1.0 releases.")
         .def_property("use_complex_fresnel", &Simulation::getUseComplexFresnel, &Simulation::setUseComplexFresnel, "Get or set whether to use complex Fresnel equations for refractive materials.")
         .def_property("direction_healpix_nside", &Simulation::getDirectionHealpixNside, &Simulation::setDirectionHealpixNside, "Set NSIDE for aggregating miss directions into Healpix bins (0 disables the histogram).")
         .def_property("ray_generator", &Simulation::getRayGenerator, &Simulation::setRayGenerator, "Get or set the ray generator for the simulation.")
