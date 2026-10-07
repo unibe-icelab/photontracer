@@ -8,6 +8,7 @@
 #include <limits>
 #include <vector>
 
+#include "backend_factory.h"
 #include "simulation.h"
 #include "geometries/mesh_geometry.h"
 #include "geometries/instance_geometry.h"
@@ -568,7 +569,9 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def_property("focus_distance", &CameraRayGenerator::getFocusDistance, &CameraRayGenerator::setFocusDistance);
 
     py::class_<Simulation, std::shared_ptr<Simulation>>(m, "Simulation")
-        .def(py::init<int, int, bool>(), py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false)
+        .def(py::init([](int gpuId, int optixLoggingLevel, bool enableValidationMode)
+                      { return std::make_unique<Simulation>(makeBackend(gpuId, optixLoggingLevel, enableValidationMode)); }),
+             py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false)
         .def("run", &Simulation::run, "Run the simulation")
         .def("free_device_memory", &Simulation::freeDeviceMemory,
              "Free device-side buffers held by the simulation (pipeline, outputs, and geometry acceleration structures).")

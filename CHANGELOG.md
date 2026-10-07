@@ -14,6 +14,9 @@ All notable changes to this project will be documented in this file.
 - Move the OptiX context and pipelines from `Simulation` into an OptiX raytracing backend behind a new `IRaytracingBackend` interface; the Python API and the results are unchanged
 - Add `benchmarks/golden.py` to check that two builds produce identical output
 - Make the physics (`light_scattering`, `complex_f`, material interaction, ray generation) host-compilable in portable headers, and add CPU-only tests (`runHostTests`) that run without a GPU
+- Allocate and copy the output buffers through the raytracing backend instead of calling CUDA from `Simulation`
+- Move the OptiX acceleration structures out of the geometry classes into the OptiX backend, which also fixes a crash when two simulations share one geometry
+- Add the CMake option `PHOTONTRACER_BUILD_OPTIX` (default on); with it off, CUDA is not needed and only the CPU tests are built. A CI job runs them without a GPU
 - Compact mesh acceleration structures after building, controlled by the new `compact` argument of `MeshGeometry` (default on)
 
 ## 1.0.2 - 18-03-2026

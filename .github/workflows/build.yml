@@ -28,3 +28,20 @@ jobs:
       - name: Build
         shell: bash -el {0}
         run: cmake --build build
+  cpu-tests:
+    name: CPU tests (no CUDA)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DPHOTONTRACER_BUILD_OPTIX=OFF
+          -DPHOTONTRACER_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

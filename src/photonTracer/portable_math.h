@@ -33,6 +33,9 @@ struct uint3
     unsigned int x, y, z;
 };
 
+inline bool operator==(uint3 a, uint3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+inline bool operator!=(uint3 a, uint3 b) { return !(a == b); }
+
 struct float3
 {
     float x, y, z;
