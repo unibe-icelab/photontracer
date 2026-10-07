@@ -4,19 +4,19 @@
 #include <cuda_runtime.h>
 #include <optix.h>
 #include <optix_device.h>
-#include <curand_kernel.h>
 #include <cstdint>
 #include <array>
 
 #include "light_scattering.h"
 #include "ray_context.h"
+#include "optix_rand_state.h"
 
 #pragma once
 
-// RayData plus the curand state that travels with the ray through the payload
+// RayData plus the random number generator state that travels with the ray through the payload
 struct OptixRayData : RayData
 {
-    curandStateMRG32k3a randState;
+    RandState randState;
 };
 
 struct DensityData
@@ -93,68 +93,6 @@ static __forceinline__ __device__ RayState unpackRayState(uint32_t packedState)
     state.currentMediumHistorySize = (packedState >> 3) & 0xF; // Extract 4 bits for currentMediumHistorySize
     state.absorbed = (packedState >> 1) & 0x3;                 // Extract 2 bits for absorbed
     state.done = (packedState & 0x1) != 0;                     // Extract the last bit for done
-    return state;
-}
-
-// Function to save the state, boxmuller flag and boxmuller extra not saved
-static __forceinline__ __device__ void packCuRandStateMRG32k3a(const curandStateMRG32k3a *state, uint32_t *statePacked)
-{
-    // Copy each of the 6 internal state variables into storage
-    statePacked[0] = state->s1[0];
-    statePacked[1] = state->s1[1];
-    statePacked[2] = state->s1[2];
-    statePacked[3] = state->s2[0];
-    statePacked[4] = state->s2[1];
-    statePacked[5] = state->s2[2];
-}
-
-// Function to restore the state of curandStateMRG32k3a from 6 uint32_ts, boxmuller flag and boxmuller extra not restored
-static __forceinline__ __device__ curandStateMRG32k3a unpackCuRandStateMRG32k3a(uint32_t *statePacked)
-{
-    curandStateMRG32k3a state;
-    state.s1[0] = statePacked[0];
-    state.s1[1] = statePacked[1];
-    state.s1[2] = statePacked[2];
-    state.s2[0] = statePacked[3];
-    state.s2[1] = statePacked[4];
-    state.s2[2] = statePacked[5];
-
-    state.boxmuller_flag = 0;
-    state.boxmuller_extra = 0.0f;
-    state.boxmuller_flag_double = 0;
-    state.boxmuller_extra_double = 0.0;
-
-    return state;
-}
-
-// function to save the state of curandStateXORWOW, boxmuller flag and boxmuller extra not saved
-static __forceinline__ __device__ void packCuRandStateXORWOW(const curandStateXORWOW *state, uint32_t *statePacked)
-{
-    // Copy each of the 6 internal state variables into storage
-    statePacked[0] = state->d;
-    statePacked[1] = state->v[0];
-    statePacked[2] = state->v[1];
-    statePacked[3] = state->v[2];
-    statePacked[4] = state->v[3];
-    statePacked[5] = state->v[4];
-}
-
-// Function to restore the state of curandStateXORWOW from 6 uint32_ts, boxmuller flag and boxmuller extra not restored
-static __forceinline__ __device__ curandStateXORWOW unpackCuRandStateXORWOW(uint32_t *statePacked)
-{
-    curandStateXORWOW state;
-    state.d = statePacked[0];
-    state.v[0] = statePacked[1];
-    state.v[1] = statePacked[2];
-    state.v[2] = statePacked[3];
-    state.v[3] = statePacked[4];
-    state.v[4] = statePacked[5];
-
-    state.boxmuller_flag = 0;
-    state.boxmuller_extra = 0.0f;
-    state.boxmuller_flag_double = 0;
-    state.boxmuller_extra_double = 0.0;
-
     return state;
 }
 
@@ -272,52 +210,38 @@ static __forceinline__ __device__ bool removeLastOccurence(uint32_t medium, uint
     return found;
 }
 
-static __forceinline__ __device__ curandStateMRG32k3a getCuRandStateMRG32k3a()
+static __forceinline__ __device__ RandState getRandState()
 {
-    uint32_t statePacked[6];
-    statePacked[0] = optixGetPayload_15();
-    statePacked[1] = optixGetPayload_16();
-    statePacked[2] = optixGetPayload_17();
-    statePacked[3] = optixGetPayload_18();
-    statePacked[4] = optixGetPayload_19();
-    statePacked[5] = optixGetPayload_20();
-    return unpackCuRandStateMRG32k3a(statePacked);
+    uint32_t words[RAND_STATE_WORDS];
+    words[0] = optixGetPayload_15();
+    if constexpr (RAND_STATE_WORDS > 1)
+        words[1] = optixGetPayload_16();
+    if constexpr (RAND_STATE_WORDS > 2)
+        words[2] = optixGetPayload_17();
+    if constexpr (RAND_STATE_WORDS > 3)
+        words[3] = optixGetPayload_18();
+    if constexpr (RAND_STATE_WORDS > 4)
+        words[4] = optixGetPayload_19();
+    if constexpr (RAND_STATE_WORDS > 5)
+        words[5] = optixGetPayload_20();
+    return unpackRandState(words);
 }
 
-static __forceinline__ __device__ void setCuRandStateMRG32k3a(const curandStateMRG32k3a &randState)
+static __forceinline__ __device__ void setRandState(const RandState &randState)
 {
-    uint32_t statePacked[6];
-    packCuRandStateMRG32k3a(&randState, statePacked);
-    optixSetPayload_15(statePacked[0]);
-    optixSetPayload_16(statePacked[1]);
-    optixSetPayload_17(statePacked[2]);
-    optixSetPayload_18(statePacked[3]);
-    optixSetPayload_19(statePacked[4]);
-    optixSetPayload_20(statePacked[5]);
-}
-
-static __forceinline__ __device__ void setCuRandStateXORWOW(const curandStateXORWOW &randState)
-{
-    uint32_t statePacked[6];
-    packCuRandStateXORWOW(&randState, statePacked);
-    optixSetPayload_15(statePacked[0]);
-    optixSetPayload_16(statePacked[1]);
-    optixSetPayload_17(statePacked[2]);
-    optixSetPayload_18(statePacked[3]);
-    optixSetPayload_19(statePacked[4]);
-    optixSetPayload_20(statePacked[5]);
-}
-
-static __forceinline__ __device__ curandStateXORWOW getCuRandStateXORWOW()
-{
-    uint32_t statePacked[6];
-    statePacked[0] = optixGetPayload_15();
-    statePacked[1] = optixGetPayload_16();
-    statePacked[2] = optixGetPayload_17();
-    statePacked[3] = optixGetPayload_18();
-    statePacked[4] = optixGetPayload_19();
-    statePacked[5] = optixGetPayload_20();
-    return unpackCuRandStateXORWOW(statePacked);
+    uint32_t words[RAND_STATE_WORDS];
+    packRandState(randState, words);
+    optixSetPayload_15(words[0]);
+    if constexpr (RAND_STATE_WORDS > 1)
+        optixSetPayload_16(words[1]);
+    if constexpr (RAND_STATE_WORDS > 2)
+        optixSetPayload_17(words[2]);
+    if constexpr (RAND_STATE_WORDS > 3)
+        optixSetPayload_18(words[3]);
+    if constexpr (RAND_STATE_WORDS > 4)
+        optixSetPayload_19(words[4]);
+    if constexpr (RAND_STATE_WORDS > 5)
+        optixSetPayload_20(words[5]);
 }
 
 static __forceinline__ __device__ float getOpticalPathLength()
