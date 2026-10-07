@@ -85,6 +85,28 @@ uint32_t OptixRaytracingBackend::getMaxMeshTriangles() const
     return getDeviceLimit(OPTIX_DEVICE_PROPERTY_LIMIT_MAX_PRIMITIVES_PER_GAS);
 }
 
+void *OptixRaytracingBackend::allocateBuffer(size_t bytes)
+{
+    void *buffer = nullptr;
+    OTK_ERROR_CHECK(cudaMalloc(&buffer, bytes));
+    return buffer;
+}
+
+void OptixRaytracingBackend::freeBuffer(void *buffer) noexcept
+{
+    cudaFree(buffer);
+}
+
+void OptixRaytracingBackend::clearBuffer(void *buffer, size_t bytes)
+{
+    OTK_ERROR_CHECK(cudaMemset(buffer, 0, bytes));
+}
+
+void OptixRaytracingBackend::copyBufferToHost(void *host, const void *buffer, size_t bytes)
+{
+    OTK_ERROR_CHECK(cudaMemcpy(host, buffer, bytes, cudaMemcpyDeviceToHost));
+}
+
 void OptixRaytracingBackend::buildGeometry(IGeometry &geometry)
 {
     geometry.build(context_);

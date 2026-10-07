@@ -23,6 +23,11 @@ public:
     uint32_t getMaxSubGeometries() const override;
     uint32_t getMaxMeshTriangles() const override;
 
+    void *allocateBuffer(size_t bytes) override;
+    void freeBuffer(void *buffer) noexcept override;
+    void clearBuffer(void *buffer, size_t bytes) override;
+    void copyBufferToHost(void *host, const void *buffer, size_t bytes) override;
+
     void buildGeometry(IGeometry &geometry) override;
 
     bool hasPipeline() const override { return pipeline_ != nullptr; }
