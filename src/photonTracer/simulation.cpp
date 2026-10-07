@@ -5,17 +5,20 @@
 // See THIRD_PARTY_NOTICES.md for full license text.
 
 #include <cmath>
+#include <stdexcept>
 #include <limits>
 
 
 #include "simulation.h"
 #include "raytracing_output.h"
 #include "output_buffers.h"
-#include "optix_raytracing_backend.h"
-
-Simulation::Simulation(int gpuId, int optixLoggingLevel, bool enableValidationMode)
-    : backend_(std::make_unique<OptixRaytracingBackend>(gpuId, optixLoggingLevel, enableValidationMode))
+Simulation::Simulation(std::unique_ptr<IRaytracingBackend> backend)
+    : backend_(std::move(backend))
 {
+    if (!backend_)
+    {
+        throw std::invalid_argument("A Simulation needs a raytracing backend");
+    }
 }
 
 Simulation::~Simulation()

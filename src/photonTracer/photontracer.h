@@ -1,10 +1,10 @@
 // This source code is licensed under the BSD-3 license found in the LICENSE file in the root directory of this source tree.
 // © 2024-2026, University of Bern, Space Research and Planetary Sciences, Physics Institute, Rafael Ottersberg
 
-#include <cuda_runtime.h>
-#include <optix.h>
+#include <cstdint>
 #include <vector>
 #include <string>
+#include "portable_math.h"
 #include "materials.h"
 #include "launch_types.h"
 #pragma once
@@ -33,7 +33,7 @@ struct InputParameters
     bool useComplexFresnel;
     GeometryType geometryType;
     float lengthScale;
-    OptixTraversableHandle handle;
+    uint64_t handle; // OptiX traversable handle; other backends do not use it
     RayGeneratorType rayGeneratorType;
     RayGeneratorData rayGeneratorData;
     DeviceOutputBuffers deviceOutputBuffers;
@@ -48,7 +48,7 @@ struct InputParametersSampleDensity
     unsigned int initSeed;
     float3 boxMin;
     float3 boxMax;
-    OptixTraversableHandle handle;
+    uint64_t handle; // OptiX traversable handle; other backends do not use it
     int32_t *intersectionCountBuffer;
 };
 
