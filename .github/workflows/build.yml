@@ -1,0 +1,30 @@
+name: Build
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build-optix:
+    name: Compile OptiX build (no GPU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment_linux.yml
+          activate-environment: photontracer
+          miniforge-version: latest
+      - name: Configure
+        shell: bash -el {0}
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CUDA_ARCHITECTURES=86
+          -DPHOTONTRACER_BUILD_TESTS=ON
+      - name: Build
+        shell: bash -el {0}
+        run: cmake --build build
