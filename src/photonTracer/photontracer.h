@@ -15,6 +15,13 @@ enum GeometryType
     MESH_INSTANCED,
 };
 
+/// Random number generator of the ray tracing kernels
+enum class RandomNumberGenerator
+{
+    PCG32,     ///< default
+    MRG32K3A, ///< curand's MRG32k3a, as in the 1.0 releases (CUDA only)
+};
+
 enum LengthUnit
 {
     MICRO_METER,

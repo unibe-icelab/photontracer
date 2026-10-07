@@ -1,7 +1,7 @@
 import numpy as np
 import trimesh
 import pytest
-from photontracer import LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, OutputType
+from photontracer import LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, OutputType, RandomNumberGenerator
 
 def test_reflection_angle():
     sim = Simulation(gpu_id=0)
@@ -153,6 +153,120 @@ def test_simulation_survives_destruction_of_another():
     before = first.get_output_buffer(OutputType.SCATTERING_COUNT).copy()
     first.run()
     assert (first.get_output_buffer(OutputType.SCATTERING_COUNT) == before).all()
+
+
+# Statistical checks against exact results. They only pass if the random numbers are uniform
+# and uncorrelated. Five standard errors keep them stable.
+
+GENERATORS = [RandomNumberGenerator.PCG32, RandomNumberGenerator.MRG32K3A]
+
+
+def _slab_beam_simulation(material, rays, generator, seed=42):
+    """A beam falling straight onto a large slab whose top surface is z = 0."""
+    sim = Simulation(gpu_id=0)
+    slab = trimesh.creation.box(extents=[10, 10, 1],
+                                transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.wavelength_um = 1.0
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), material]
+    sim.seed = seed
+    sim.random_number_generator = generator
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=rays, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=3)
+    sim.outputs = [OutputType.SCATTERING_COUNT, OutputType.LAST_DIRECTION, OutputType.RAY_STATE]
+    sim.run()
+    return (sim.get_output_buffer(OutputType.SCATTERING_COUNT), sim.get_output_buffer(OutputType.LAST_DIRECTION),
+            sim.get_output_buffer(OutputType.RAY_STATE))
+
+
+def _assert_fraction(count, total, expected, what):
+    sigma = np.sqrt(expected * (1 - expected) / total)
+    assert abs(count / total - expected) < 5 * sigma, f"{what}: {count / total:.5f}, expected {expected:.5f} +- {sigma:.5f}"
+
+
+def test_pcg32_is_the_default_random_number_generator():
+    assert Simulation(gpu_id=0).random_number_generator == RandomNumberGenerator.PCG32
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_normal_incidence_reflectance_matches_fresnel(generator):
+    n = 400000
+    counts, directions, _ = _slab_beam_simulation(Material(MaterialType.REFRACTIVE, 1.5 + 0j), n, generator)
+    reflected_at_top = (counts == 1) & (directions[:, 2] > 0)
+    _assert_fraction(int(reflected_at_top.sum()), n, ((1.5 - 1) / (1.5 + 1)) ** 2, "reflectance")
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_diffuse_surface_absorbs_one_minus_albedo(generator):
+    n = 400000
+    counts, directions, state = _slab_beam_simulation(Material(MaterialType.DIFFUSE, 0.3), n, generator)
+    _assert_fraction(int((state == 1).sum()), n, 0.7, "absorbed fraction")
+
+    # a Lambertian surface sends light out with a mean cosine of 2/3
+    scattered = state == 0
+    mean_cosine = directions[scattered, 2].mean()
+    assert abs(mean_cosine - 2 / 3) < 5 * np.sqrt(1 / 18 / scattered.sum())
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_isotropic_source_is_uniform_on_the_sphere(generator):
+    n = 300000
+    sim = Simulation(gpu_id=0)
+    sphere = trimesh.creation.icosphere(subdivisions=1, radius=1.0)
+    sim.geometry = MeshGeometry(sphere.vertices, sphere.faces)
+    sim.wavelength_um = 1.0
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.3 + 0j)]
+    sim.random_number_generator = generator
+    sim.ray_generator = IsotropicRayGenerator(number_of_rays=n, center=(0, 0, 0), source_radius=10, offset_radius=1)
+    sim.outputs = [OutputType.SOURCE_DIRECTION]
+    sim.run()
+    directions = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
+
+    assert np.allclose(np.linalg.norm(directions, axis=1), 1.0, atol=1e-5)
+    assert (np.abs(directions.mean(axis=0)) < 5 / np.sqrt(3 * n)).all()  # each component has variance 1/3
+    assert np.allclose((directions ** 2).mean(axis=0), 1 / 3, atol=5 * np.sqrt(4 / 45 / n))
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_same_seed_gives_the_same_rays_and_another_seed_different_ones(generator):
+    glass = Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)
+    first = _slab_beam_simulation(glass, 20000, generator, seed=5)
+    again = _slab_beam_simulation(glass, 20000, generator, seed=5)
+    other = _slab_beam_simulation(glass, 20000, generator, seed=6)
+
+    assert (first[1] == again[1]).all()
+    assert not (first[1] == other[1]).all()
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_pipelines_pass_optix_validation_with_each_generator(generator):
+    # Validation mode checks every payload access against the declared payload size
+    sim = Simulation(gpu_id=0, enable_validation_mode=True)
+    sphere = trimesh.creation.icosphere(subdivisions=2, radius=2.0)
+    sim.geometry = MeshGeometry(sphere.vertices, sphere.faces)
+    sim.materials = _materials(2)
+    sim.wavelength_um = 1.0
+    sim.random_number_generator = generator
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=1000, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=1)
+    sim.outputs = [OutputType.SCATTERING_COUNT]
+    sim.run()
+    assert sim.calculate_volume_fraction([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5], 1000) == 1.0
+
+
+def test_the_generator_can_be_changed_between_runs():
+    glass = Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)
+    sim = _box_simulation(_materials(2))
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), glass]
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=20000, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.9)
+    sim.outputs = [OutputType.LAST_DIRECTION]
+
+    results = []
+    for generator in (RandomNumberGenerator.PCG32, RandomNumberGenerator.MRG32K3A, RandomNumberGenerator.PCG32):
+        sim.random_number_generator = generator
+        sim.run()
+        results.append(sim.get_output_buffer(OutputType.LAST_DIRECTION).copy())
+
+    assert not (results[0] == results[1]).all()  # another generator draws other numbers
+    assert (results[0] == results[2]).all()      # switching back reproduces the first run
 
 
 def test_circular_polarization_at_normal():

@@ -66,6 +66,19 @@ Build and install photontracer with scikit-build using pip:
 pip install .
 ```
 
+### Random number generator
+
+The kernels use PCG32 by default. It is much cheaper to seed than curand's MRG32k3a, which the 1.0
+releases used, and for scenes with little physics per ray this is most of the run time. To use
+curand again, for example to reproduce results of a 1.0 release ray by ray, set it on the simulation:
+
+```python
+sim.random_number_generator = photontracer.RandomNumberGenerator.MRG32K3A
+```
+
+Both generators give the same results statistically, but not ray by ray, so a seed only reproduces
+a run with the same generator (and the same build).
+
 ## Usage
 
 Refer to the example jupyter notebooks in `examples/` and the docstrings of the Python objects.

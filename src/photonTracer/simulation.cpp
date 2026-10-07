@@ -200,6 +200,16 @@ uint32_t Simulation::getInitSeed() const
     return initSeed_;
 }
 
+void Simulation::setRandomNumberGenerator(RandomNumberGenerator generator)
+{
+    if (!backend_->supportsRandomNumberGenerator(generator))
+    {
+        throw std::invalid_argument("The random number generator is not available in this build or backend");
+    }
+    randomNumberGenerator_ = generator;
+    pipelineDirty_ = true;
+}
+
 void Simulation::setUseComplexFresnel(bool useComplexFresnel)
 {
     useComplexFresnel_ = useComplexFresnel;
@@ -263,7 +273,7 @@ void Simulation::initializePipeline()
     {
         throw std::runtime_error("Wavelength not set. Call setWavelengthUm() first.");
     }
-    backend_->initializePipeline(materials_, wavelengthUm_, maxNestedGeometryLevels_);
+    backend_->initializePipeline(materials_, wavelengthUm_, maxNestedGeometryLevels_, randomNumberGenerator_);
 }
 
 void Simulation::initializePipelineDensity()
@@ -272,7 +282,7 @@ void Simulation::initializePipelineDensity()
     {
         throw std::runtime_error("Geometry not set. Call setGeometry() first.");
     }
-    backend_->initializeDensityPipeline(maxNestedGeometryLevels_);
+    backend_->initializeDensityPipeline(maxNestedGeometryLevels_, randomNumberGenerator_);
 }
 
 void Simulation::allocateOutputBuffers(const uint3 launchShape)
