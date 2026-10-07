@@ -7,7 +7,10 @@
 
 #include <optix.h>
 
+#include "geometries/instance_geometry.h"
+#include "geometries/mesh_geometry.h"
 #include "i_raytracing_backend.h"
+#include "optix_acceleration_structure.h"
 #include "optix_raytracing_pipeline.h"
 
 class OptixRaytracingBackend : public IRaytracingBackend
@@ -43,6 +46,9 @@ public:
 
 private:
     uint32_t getDeviceLimit(OptixDeviceProperty property) const;
+    void buildMesh(const MeshGeometry &mesh, OptixAccelerationStructure &accelerationStructure);
+    void buildInstances(const InstanceGeometry &instances, OptixAccelerationStructure &accelerationStructure);
+    OptixTraversableHandle traversableHandle(const IGeometry &geometry) const;
     static void contextLogCb(uint32_t level, const char *tag, const char *message, void *cbdata);
 
     OptixDeviceContext context_ = nullptr;

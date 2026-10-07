@@ -126,6 +126,24 @@ def test_last_material_id_is_supported():
     assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[0] == 2
 
 
+def test_geometry_shared_between_simulations():
+    box = trimesh.creation.box(extents=[2, 2, 2])
+    geometry = MeshGeometry(box.vertices, box.faces)
+    a = _box_simulation(_materials(2), geometry)
+    b = _box_simulation(_materials(2), geometry)
+
+    counts = []
+    for sim in (a, b, a, b):
+        sim.run()
+        counts.append(sim.get_output_buffer(OutputType.SCATTERING_COUNT).copy())
+    del b
+    a.run()
+    counts.append(a.get_output_buffer(OutputType.SCATTERING_COUNT).copy())
+
+    for result in counts[1:]:
+        assert (result == counts[0]).all()
+
+
 def test_simulation_survives_destruction_of_another():
     first = _box_simulation(_materials(2))
     first.run()

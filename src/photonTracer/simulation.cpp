@@ -353,7 +353,7 @@ void Simulation::run()
         previousGeometry_.reset();
     }
 
-    if (geometryDirty_)
+    if (geometryDirty_ || !geometry_->isBuiltBy(backend_.get()))
     {
         backend_->buildGeometry(*geometry_);
         geometryDirty_ = false;
@@ -416,7 +416,7 @@ float Simulation::calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t
         previousGeometry_->freeDeviceMemory();
         previousGeometry_.reset();
     }
-    if (geometryDirty_)
+    if (geometryDirty_ || !geometry_->isBuiltBy(backend_.get()))
     {
         backend_->buildGeometry(*geometry_);
         geometryDirty_ = false;
