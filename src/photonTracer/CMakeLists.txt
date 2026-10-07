@@ -3,7 +3,6 @@ include(BuildConfig)
 include(embed_cuda)
 
 add_library(Geometry
-  geometries/geometry_util.cpp
   geometries/instance_geometry.cpp
   geometries/mesh_geometry.cpp
 )
@@ -33,6 +32,7 @@ pybind11_add_module( photontracer_bindings
   photontracer_bindings.cpp
   simulation.cpp
   optix_raytracing_backend.cpp
+  optix_geometry_build.cpp
   optix_raytracing_pipeline.cpp
   raytracing_output.cpp 
   output_buffers.cpp

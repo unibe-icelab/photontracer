@@ -2,11 +2,15 @@
 // © 2024-2026, University of Bern, Space Research and Planetary Sciences, Physics Institute, Rafael Ottersberg
 
 #include <iomanip>
+#include <cassert>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 #include <OptiXToolkit/Error/cudaErrorCheck.h>
 #include <OptiXToolkit/Error/optixErrorCheck.h>
 
+#include "optix_geometry_build.h"
 #include "optix_raytracing_backend.h"
 
 OptixRaytracingBackend::OptixRaytracingBackend(int gpuId, int optixLoggingLevel, bool enableValidationMode)
@@ -109,7 +113,80 @@ void OptixRaytracingBackend::copyBufferToHost(void *host, const void *buffer, si
 
 void OptixRaytracingBackend::buildGeometry(IGeometry &geometry)
 {
-    geometry.build(context_);
+    auto accelerationStructure = std::make_unique<OptixAccelerationStructure>(static_cast<const IRaytracingBackend *>(this));
+    switch (geometry.getType())
+    {
+    case MESH:
+        buildMesh(static_cast<const MeshGeometry &>(geometry), *accelerationStructure);
+        break;
+    case MESH_INSTANCED:
+        buildInstances(static_cast<const InstanceGeometry &>(geometry), *accelerationStructure);
+        break;
+    default:
+        throw std::runtime_error("Unknown geometry type");
+    }
+    geometry.setAccelerationStructure(std::move(accelerationStructure));
+}
+
+void OptixRaytracingBackend::buildMesh(const MeshGeometry &mesh, OptixAccelerationStructure &accelerationStructure)
+{
+    buildGasFromMesh(
+        mesh.getVertices(), mesh.getIndices(), context_,
+        accelerationStructure.handle, accelerationStructure.buffer, mesh.isCompact());
+}
+
+void OptixRaytracingBackend::buildInstances(const InstanceGeometry &instances, OptixAccelerationStructure &accelerationStructure)
+{
+    const uint32_t maxInstancesPerIAS = getMaxSubGeometries();
+    const std::vector<float> &transforms = instances.getInstanceTransforms();
+    const size_t numberOfInstances = transforms.size() / 12; // Each instance transform is 3x4 matrix (12 floats)
+
+    assert(numberOfInstances <= maxInstancesPerIAS &&
+           ("Number of instances exceeds the maximum allowed per Instance Acceleration Structure on this device which is: " + std::to_string(maxInstancesPerIAS)).c_str());
+
+    const auto &subGeometries = instances.getSubGeometries();
+    for (const auto &subGeometry : subGeometries)
+    {
+        if (!subGeometry->isBuiltBy(static_cast<const IRaytracingBackend *>(this)))
+        {
+            buildGeometry(*subGeometry);
+        }
+    }
+
+    std::vector<OptixInstance> allInstances(numberOfInstances);
+    for (size_t i = 0; i < numberOfInstances; ++i)
+    {
+        OptixInstance instance = {};
+        // Copy the 3x4 transform (12 floats per instance)
+        for (int j = 0; j < 12; ++j)
+        {
+            instance.transform[j] = transforms[i * 12 + j];
+        }
+
+        instance.instanceId = instances.getMaterialIds()[i];
+        instance.sbtOffset = 0;
+        instance.visibilityMask = 255;
+        instance.flags = OPTIX_INSTANCE_FLAG_NONE;
+        // Reference the AS built for this subgeometry.
+        const unsigned int particleTypeId = instances.getParticleTypeIds()[i];
+        if (particleTypeId >= subGeometries.size())
+        {
+            throw std::runtime_error("Particle type ID out of bounds for subGeometries.");
+        }
+        instance.traversableHandle = traversableHandle(*subGeometries[particleTypeId]);
+        allInstances[i] = instance;
+    }
+
+    buildIasFromInstances(allInstances, context_, accelerationStructure.handle, accelerationStructure.buffer);
+}
+
+OptixTraversableHandle OptixRaytracingBackend::traversableHandle(const IGeometry &geometry) const
+{
+    if (!geometry.isBuiltBy(static_cast<const IRaytracingBackend *>(this)))
+    {
+        throw std::runtime_error("The geometry has not been built by this backend");
+    }
+    return static_cast<const OptixAccelerationStructure *>(geometry.getAccelerationStructure())->handle;
 }
 
 void OptixRaytracingBackend::initializePipeline(const std::vector<Material> &materials, float wavelengthUm, uint32_t maxTraversableGraphDepth)
@@ -124,7 +201,7 @@ void OptixRaytracingBackend::updateShaderBindingTable(const std::vector<Material
 
 void OptixRaytracingBackend::launch(InputParameters &params, const IGeometry &geometry, uint3 launchShape)
 {
-    params.handle = geometry.getTraversableHandle();
+    params.handle = traversableHandle(geometry);
     pipeline_->launch(params, launchShape);
 }
 
@@ -135,6 +212,6 @@ void OptixRaytracingBackend::initializeDensityPipeline(uint32_t maxTraversableGr
 
 void OptixRaytracingBackend::launchDensity(InputParametersSampleDensity &params, const IGeometry &geometry)
 {
-    params.handle = geometry.getTraversableHandle();
+    params.handle = traversableHandle(geometry);
     densityPipeline_->launch(params);
 }

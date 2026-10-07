@@ -6,9 +6,6 @@
 #include <memory>
 #include <string>
 
-#include <optix.h>
-#include <cuda_runtime.h>
-
 #include "../i_geometry.h"
 #include "mesh_geometry.h"
 
@@ -34,14 +31,6 @@ public:
                      std::vector<unsigned int> particleTypeIds,
                      std::vector<unsigned int> materialIds);
 
-    /**
-     * @brief Build the OptiX acceleration structure.
-     *
-     * @param context The OptiX device context.
-     * @return BuildResult containing the traversable handle and output buffer.
-     */
-    void build(OptixDeviceContext &context) override;
-
     void freeDeviceMemory() override;
 
     /**
@@ -53,6 +42,11 @@ public:
 
     /// Every instance material ID must refer to a configured material.
     void validateMaterialIds(std::size_t materialCount) const override;
+
+    const std::vector<std::shared_ptr<IGeometry>> &getSubGeometries() const { return subGeometries; }
+    const std::vector<float> &getInstanceTransforms() const { return instanceTransforms; } ///< 3x4 row-major per instance
+    const std::vector<unsigned int> &getParticleTypeIds() const { return particleTypeIds; }
+    const std::vector<unsigned int> &getMaterialIds() const { return materialIds; }
 
 private:
     std::vector<std::shared_ptr<IGeometry>> subGeometries;
