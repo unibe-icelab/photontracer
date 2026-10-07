@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 - Reject more than 16 materials, instance material IDs outside the configured materials, and mesh scenes with fewer than 2 materials; before, these silently absorbed rays or wrote past a fixed-size array
 - Fix the debug-build bounds checks, which rejected the valid material ID 15
 - Move the OptiX context and pipelines from `Simulation` into an OptiX raytracing backend behind a new `IRaytracingBackend` interface; the Python API and the results are unchanged
+- Add `benchmarks/golden.py` to check that two builds produce identical output
+- Make the physics (`light_scattering`, `complex_f`, material interaction, ray generation) host-compilable in portable headers, and add CPU-only tests (`runHostTests`) that run without a GPU
 - Compact mesh acceleration structures after building, controlled by the new `compact` argument of `MeshGeometry` (default on)
 
 ## 1.0.2 - 18-03-2026
