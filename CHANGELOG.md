@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## 1.0.x - Unreleased
 
 - Add Changelog file
+- Add CI workflow that compiles the OptiX build without a GPU
 
 ## 1.0.1 - 16-03-2026
 
