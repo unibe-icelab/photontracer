@@ -9,29 +9,14 @@
 #include <array>
 
 #include "light_scattering.h"
+#include "ray_context.h"
 
 #pragma once
 
-struct RayState
+// RayData plus the curand state that travels with the ray through the payload
+struct OptixRayData : RayData
 {
-    uint32_t numberOfWarnings;         // 21 bit (0-2097151)
-    uint32_t currentMedium;            // 4 bit (0-15)
-    uint32_t currentMediumHistorySize; // 4 bit (0-15)
-    uint32_t absorbed;                 // 2 bit (0-15)
-    bool done;                         // 1 bit
-};
-
-struct RayData
-{
-    float3 direction;
-    float3 origin;
-    float4 stokesVector;
-    float3 qMinusAxis;
-    double opticalPathLength;
-
     curandStateMRG32k3a randState;
-    RayState state;
-    uint32_t mediumHistory[8]; // 8 layers of history, each 4 bits
 };
 
 struct DensityData
@@ -344,3 +329,22 @@ static __forceinline__ __device__ void setOpticalPathLength(const float &opl)
 {
     optixSetPayload_21(__float_as_uint(opl));
 }
+
+// Ray context backed by the payload registers of the current OptiX program
+struct OptixPayloadRayContext
+{
+    __device__ float3 getOrigin() const { return getRayOrigin(); }
+    __device__ void setOrigin(float3 origin) const { setRayOrigin(origin); }
+    __device__ float3 getDirection() const { return getRayDirection(); }
+    __device__ void setDirection(float3 direction) const { setRayDirection(direction); }
+    __device__ float4 getStokesVector() const { return ::getStokesVector(); }
+    __device__ void setStokesVector(float4 stokesVector) const { ::setStokesVector(stokesVector); }
+    __device__ float3 getQMinusAxis() const { return ::getQMinusAxis(); }
+    __device__ void setQMinusAxis(float3 qMinusAxis) const { setQDirection(qMinusAxis); }
+    __device__ RayState getState() const { return getRayState(); }
+    __device__ void setState(RayState state) const { setRayState(state); }
+    __device__ uint32_t getMedium(uint32_t index) const { return ::getMedium(index); }
+    __device__ bool appendMedium(uint32_t medium, uint32_t &historySize) const { return ::appendMedium(medium, historySize); }
+    __device__ bool removeLastOccurence(uint32_t medium, uint32_t &historySize) const { return ::removeLastOccurence(medium, historySize); }
+    __device__ void setLastSegmentOpticalPathLength(float length) const { setOpticalPathLength(length); }
+};

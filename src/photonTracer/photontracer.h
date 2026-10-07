@@ -5,6 +5,7 @@
 #include <optix.h>
 #include <vector>
 #include <string>
+#include "materials.h"
 #pragma once
 
 enum GeometryType
@@ -27,13 +28,6 @@ enum RayGeneratorType
     RAYGEN_CAMERA,
 };
 
-enum MaterialType
-{
-    DIFFUSE,
-    REFRACTIVE,
-    VOLUME_SCATTERING,
-    REFLECTIVE,
-};
 
 union RayGeneratorData
 {
@@ -66,45 +60,9 @@ union RayGeneratorData
     } camera;
 };
 
-struct RefractiveIndex
-{
-    float r;
-    float i;
-};
 
-union MaterialProperties
-{
-    struct Diffuse
-    {
-        float albedo; // Albedo for Diffuse material
-    } diffuse;
 
-    struct Refractive
-    {
-        RefractiveIndex refractiveIndex; // Refractive index for the material
-    } refractive;
 
-    struct VolumeScattering
-    {
-        RefractiveIndex refractiveIndex; // Refractive index for the medium (absorption coefficient in k)
-        float scatteringCoefficient;     // Scattering coefficient for the medium
-        float asymetryParameter;         // Asymmetry parameter for the Henyey-Greenstein phase function
-    } volumeScattering;
-
-    struct Reflective
-    {
-        float reflectivity; // Reflectivity for the material
-        float fuzziness;    // Fuzziness for the material
-    } reflective;
-};
-
-struct Material
-{
-    MaterialType type;             // Type of the material
-    MaterialProperties properties; // Properties of the material
-};
-
-constexpr uint32_t MAX_MATERIALS = 16; // the medium index is stored in 4 bits
 
 
 enum class OutputType
@@ -210,11 +168,6 @@ struct MissData
     // No data needed
 };
 
-struct HitGroupData
-{
-    Material materials[MAX_MATERIALS]; // Array of refractive indices for each material
-    float wavelengthUm;
-};
 
 struct HitGroupDataDensity
 {

@@ -453,7 +453,7 @@ PT_INLINE PT_HD otk::Transform4 calculateMullerTransmission(
  * @param[in] nB The refractive index of the medium the refracted ray will be in
  * @param[in] randomSample A random number between 0 and 1
  */
-PT_HD bool calculateFresnelInteraction(
+PT_INLINE PT_HD bool calculateFresnelInteraction(
     float4 &stokesVector, float3 &qMinusAxis,
     float3 &direction, const float3 &surfaceNormal,
     const float &nA, const float &nB, const float &randomSample)
@@ -677,7 +677,7 @@ PT_INLINE PT_HD otk::Transform4 calculateMullerTransmission(
  * @param[in] nB The refractive index of the medium the refracted ray will be in
  * @param[in] randomSample A random number between 0 and 1
  */
-PT_HD bool calculateFresnelInteraction(
+PT_INLINE PT_HD bool calculateFresnelInteraction(
     float4 &stokesVector, float3 &qMinusAxis,
     float3 &direction, const float3 &surfaceNormal,
     const Complexf &nA, const Complexf &nB, const float &randomSample)

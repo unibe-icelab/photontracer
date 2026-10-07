@@ -16,6 +16,7 @@
 #include <OptiXToolkit/ShaderUtil/SelfIntersectionAvoidance.h>
 #include "logging.cuh"
 #include "light_scattering.h"
+#include "material_hit.h"
 #include "complex_f.h"
 
 #ifndef M_PI
@@ -279,7 +280,7 @@ static __forceinline__ __device__ void computeRayCamera(float3 &origin, float3 &
 
 static __forceinline__ __device__ void traceRay(
     OptixTraversableHandle handle,
-    RayData &rayData,
+    OptixRayData &rayData,
     float tmin,
     float tmax)
 {
@@ -298,7 +299,7 @@ static __forceinline__ __device__ void traceRay(
     packFloat3(rayData.qMinusAxis, qDirPayLoad);
 
     statePayload = packRayState(rayData.state);
-    mediumHistoryPayload = packMediumHistory(rayData.mediumHistory);
+    mediumHistoryPayload = rayData.packedMediumHistory;
 
     packCuRandStateMRG32k3a(&rayData.randState, curandStatePayload);
 
@@ -332,7 +333,7 @@ static __forceinline__ __device__ void traceRay(
     rayData.state = unpackRayState(statePayload);
     double oplLastSegment = static_cast<double>(__uint_as_float(oplLastSegmentPayload));
     rayData.opticalPathLength += oplLastSegment;
-    unpackMediumHistory(mediumHistoryPayload, rayData.mediumHistory);
+    rayData.packedMediumHistory = mediumHistoryPayload;
     rayData.randState = unpackCuRandStateMRG32k3a(curandStatePayload);
 }
 
@@ -446,10 +447,11 @@ extern "C" __global__ void __raygen__rg()
     }
 
     // prepare the payload
-    RayData prd;
+    OptixRayData prd;
     // Trace the ray against our scene hierarchy
     prd.direction = incidentRayDirection;
     prd.origin = rayOrigin;
+    prd.packedMediumHistory = 0;
 
     auto stokesSetting = params.stokesVector;
     float4 stokesIn = stokesSetting;
@@ -688,425 +690,88 @@ extern "C" __global__ void __miss__density()
 extern "C" __global__ void __closesthit__ch()
 {
     HitGroupData *hgData = reinterpret_cast<HitGroupData *>(optixGetSbtDataPointer());
-    // Get ray information and calculate the hit point
-    float3 rayOrigin = optixGetWorldRayOrigin();
-    float3 rayDir = optixGetWorldRayDirection();
-    float maxDistance = optixGetRayTmax();
 
-    unsigned int instanceId = optixGetInstanceId();
+    HitInfo hit;
+    hit.rayOrigin = optixGetWorldRayOrigin();
+    hit.rayDirection = optixGetWorldRayDirection();
+    hit.maxDistance = optixGetRayTmax();
 
-    if (instanceId == UINT32_MAX)
+    hit.instanceId = optixGetInstanceId();
+    if (hit.instanceId == UINT32_MAX)
     {
-        instanceId = 1;
+        hit.instanceId = 1; // a plain mesh uses material 1 for its inside
     }
 
-#if !defined(NDEBUG)
-    if (instanceId >= MAX_MATERIALS)
-    {
-        printf("Error: instanceId %u out of bounds [0, 16)\n", instanceId);
-        RayState state = getRayState();
-        state.absorbed = 3;
-        state.done = 1;
-        setRayState(state);
-        return;
-    }
-#endif
-
-    Material scatteringMaterial = hgData->materials[instanceId];
-    DBG_LOG_INT("Hit material id", instanceId);
-    DBG_LOG_INT("Hit material type", scatteringMaterial.type);
-
-    float3 hitPoint = rayOrigin + maxDistance * rayDir;
-
-    curandStateMRG32k3a curandState = getCuRandStateMRG32k3a();
-
-    // Calculate the object normal from the cross product of the triangle vertices
-    const OptixTraversableHandle gas = optixGetGASTraversableHandle();
-    const unsigned int gasSbtIdx = optixGetSbtGASIndex();
-    const unsigned int primIdx = optixGetPrimitiveIndex();
-
-    float3 front, back;
-    float3 objectNormal, worldNormal;
-
-    bool isFrontFace;
-
-    if (optixIsTriangleHit())
-    {
-        DBG_LOG_TEXT("Hit triangle primitive");
-        isFrontFace = optixIsTriangleFrontFaceHit();
-        float3 vertices[3] = {};
-        optixGetTriangleVertexData(
-            gas,
-            primIdx,
-            gasSbtIdx,
-            0,
-            vertices);
-        objectNormal = otk::cross(vertices[1] - vertices[0], vertices[2] - vertices[0]);
-        objectNormal = otk::normalize(objectNormal);
-
-        float3 objectHitPoint = optixTransformPointFromWorldToObjectSpace(hitPoint);
-        float offset;
-
-        SelfIntersectionAvoidance::getSafeTriangleSpawnOffset(
-            objectHitPoint,
-            objectNormal,
-            offset,
-            vertices[0],
-            vertices[1],
-            vertices[2],
-            optixGetTriangleBarycentrics());
-
-        float worldOffset;
-
-        SelfIntersectionAvoidance::transformSafeSpawnOffset(
-            hitPoint,
-            worldNormal,
-            worldOffset,
-            objectHitPoint,
-            objectNormal,
-            offset);
-
-        SelfIntersectionAvoidance::offsetSpawnPoint(
-            front,
-            back,
-            hitPoint,
-            worldNormal,
-            worldOffset);
-
-        if (otk::dot(worldNormal, rayDir) > 0.0f)
-        {
-            worldNormal = -worldNormal;
-            // swap front and back
-            float3 temp = front;
-            front = back;
-            back = temp;
-        }
-    }
-    else
+    if (!optixIsTriangleHit())
     {
         printf("Error: Unknown geometry type intersected\n");
         return;
     }
+    DBG_LOG_TEXT("Hit triangle primitive");
 
-    DBG_LOG_FLOAT3("Hit point", hitPoint);
-    DBG_LOG_FLOAT3("Normal", worldNormal);
-    DBG_LOG_BOOL("Front face", isFrontFace);
+    float3 hitPoint = hit.rayOrigin + hit.maxDistance * hit.rayDirection;
 
-    RayState state = getRayState();
-#if !defined(NDEBUG)
-    if (state.currentMedium >= MAX_MATERIALS)
+    // Object normal from the triangle vertices
+    const OptixTraversableHandle gas = optixGetGASTraversableHandle();
+    const unsigned int gasSbtIdx = optixGetSbtGASIndex();
+    const unsigned int primIdx = optixGetPrimitiveIndex();
+
+    hit.isFrontFace = optixIsTriangleFrontFaceHit();
+    float3 vertices[3] = {};
+    optixGetTriangleVertexData(
+        gas,
+        primIdx,
+        gasSbtIdx,
+        0,
+        vertices);
+    float3 objectNormal = otk::cross(vertices[1] - vertices[0], vertices[2] - vertices[0]);
+    objectNormal = otk::normalize(objectNormal);
+
+    float3 objectHitPoint = optixTransformPointFromWorldToObjectSpace(hitPoint);
+    float offset;
+
+    SelfIntersectionAvoidance::getSafeTriangleSpawnOffset(
+        objectHitPoint,
+        objectNormal,
+        offset,
+        vertices[0],
+        vertices[1],
+        vertices[2],
+        optixGetTriangleBarycentrics());
+
+    float worldOffset;
+
+    SelfIntersectionAvoidance::transformSafeSpawnOffset(
+        hitPoint,
+        hit.worldNormal,
+        worldOffset,
+        objectHitPoint,
+        objectNormal,
+        offset);
+
+    SelfIntersectionAvoidance::offsetSpawnPoint(
+        hit.front,
+        hit.back,
+        hitPoint,
+        hit.worldNormal,
+        worldOffset);
+    hit.hitPoint = hitPoint;
+
+    if (otk::dot(hit.worldNormal, hit.rayDirection) > 0.0f)
     {
-        printf("Error: current medium index %u out of bounds [0, 16)\n", state.currentMedium);
-        state.absorbed = 3;
-        state.done = 1;
-        setRayState(state);
-        return;
-    }
-#endif
-    MaterialType currentMaterialType = hgData->materials[state.currentMedium].type;
-    DBG_LOG_INT("Current medium", currentMaterialType);
-
-    RefractiveIndex currentRefractiveIndex = {1.0f, 0.0f};
-    bool didAbsorb = false;
-    bool didScatter = false;
-    float rndSample = curand_uniform(&curandState);
-    float travelledDistance = 0.0f;
-    float wavelengthUm = hgData->wavelengthUm;
-
-    if (currentMaterialType == REFRACTIVE)
-    {
-        currentRefractiveIndex = hgData->materials[state.currentMedium].properties.refractive.refractiveIndex;
-        DBG_LOG_TEXT("Current medium is refractive material");
-        didAbsorb = calculateAbsorption(
-            maxDistance,
-            wavelengthUm,
-            params.lengthScale,
-            currentRefractiveIndex.i,
-            rndSample,
-            travelledDistance);
-    }
-    else if (currentMaterialType == VOLUME_SCATTERING)
-    {
-        currentRefractiveIndex = hgData->materials[state.currentMedium].properties.volumeScattering.refractiveIndex;
-        DBG_LOG_TEXT("Current medium is volume scattering material");
-        float absorptionCoefficient = absorptionCoefficientFromk(currentRefractiveIndex.i, wavelengthUm, params.lengthScale);
-        DBG_LOG_FLOAT("Absorption coefficient", absorptionCoefficient);
-        float scatteingCoefficient = hgData->materials[state.currentMedium].properties.volumeScattering.scatteringCoefficient;
-        DBG_LOG_FLOAT("Scattering coefficient", scatteingCoefficient);
-        float extinctionCoefficient = absorptionCoefficient + scatteingCoefficient;
-        bool didAbsorbOrScatter = calculateDistance(
-            maxDistance,
-            extinctionCoefficient,
-            rndSample,
-            travelledDistance);
-
-        if (didAbsorbOrScatter)
-        {
-            float singleScatteringAlbedo = scatteingCoefficient / extinctionCoefficient;
-            DBG_LOG_FLOAT("Single scattering albedo", singleScatteringAlbedo);
-            rndSample = curand_uniform(&curandState);
-            if (rndSample < singleScatteringAlbedo)
-            {
-                didScatter = true;
-            }
-            else
-            {
-                didAbsorb = true;
-            }
-            DBG_LOG_BOOL("Did scatter", didScatter);
-            DBG_LOG_BOOL("Did absorb", didAbsorb);
-        }
-    }
-    else
-    {
-        DBG_LOG_TEXT("Current medium is not absorbing/volume scattering");
-        travelledDistance = maxDistance;
+        hit.worldNormal = -hit.worldNormal;
+        float3 temp = hit.front;
+        hit.front = hit.back;
+        hit.back = temp;
     }
 
-    setOpticalPathLength(travelledDistance * currentRefractiveIndex.r);
+    curandStateMRG32k3a curandState = getCuRandStateMRG32k3a();
+    auto nextSample = [&curandState]() { return curand_uniform(&curandState); };
 
-    if (didAbsorb || didScatter)
-    {
-        // volume interaction
-        hitPoint = rayOrigin + travelledDistance * rayDir;
+    OptixPayloadRayContext ctx;
+    handleMaterialHit(ctx, hit, *hgData, params.lengthScale, params.useComplexFresnel, nextSample);
 
-        setRayOrigin(hitPoint);
-        if (didAbsorb)
-        {
-            state.absorbed = 1;
-            state.done = 1;
-            setRayState(state);
-            DBG_LOG_FLOAT("Absorbed distance", travelledDistance);
-            DBG_LOG_INT("Absorbed medium", state.currentMedium);
-        }
-        else
-        {
-            DBG_LOG_FLOAT("Scattered distance", travelledDistance);
-            DBG_LOG_INT("Scattered medium", state.currentMedium);
-
-            float u1 = curand_uniform(&curandState);
-            float u2 = curand_uniform(&curandState);
-            auto newDirection = henyeyGreensteinDirection(
-                rayDir,
-                hgData->materials[state.currentMedium].properties.volumeScattering.asymetryParameter,
-                u1,
-                u2);
-
-            setRayDirection(newDirection);
-            setCuRandStateMRG32k3a(curandState);
-        }
-    }
-    else if (scatteringMaterial.type == DIFFUSE)
-    {
-        DBG_LOG_FLOAT("Diffuse albedo", scatteringMaterial.properties.diffuse.albedo);
-
-        auto albedo = hgData->materials[instanceId].properties.diffuse.albedo;
-
-        if (curand_uniform(&curandState) < albedo)
-        {
-            hitPoint = front;
-            float u1 = curand_uniform(&curandState);
-            float u2 = curand_uniform(&curandState);
-            auto newDirection = calculateLamberianDirection(u1, u2, worldNormal);
-
-            setRayOrigin(hitPoint);
-            setRayDirection(newDirection);
-            setCuRandStateMRG32k3a(curandState);
-            setRayState(state);
-            setStokesVector(make_float4(1.0f, 0.0f, 0.0f, 0.0f));
-        }
-        else
-        {
-            setRayOrigin(hitPoint);
-            state.absorbed = 1;
-            state.done = 1;
-            setRayState(state);
-        }
-    }
-    else if (scatteringMaterial.type == REFLECTIVE)
-    {
-        DBG_LOG_FLOAT("Reflectivity", scatteringMaterial.properties.reflective.reflectivity);
-        DBG_LOG_FLOAT("Fuzziness", scatteringMaterial.properties.reflective.fuzziness);
-        auto reflectivity = hgData->materials[instanceId].properties.reflective.reflectivity;
-        auto fuzziness = hgData->materials[instanceId].properties.reflective.fuzziness;
-
-        if (curand_uniform(&curandState) <= reflectivity)
-        {
-            hitPoint = front;
-
-            auto newDirection = calculateReflectedDirection(rayDir, worldNormal);
-            if (fuzziness > 0.0f)
-            {
-                float3 randomInUnitSphere;
-                do
-                {
-                    randomInUnitSphere = make_float3(
-                        2.0f * curand_uniform(&curandState) - 1.0f,
-                        2.0f * curand_uniform(&curandState) - 1.0f,
-                        2.0f * curand_uniform(&curandState) - 1.0f);
-                } while (otk::dot(randomInUnitSphere, randomInUnitSphere) >= 1.0f);
-                float3 randomOnUnitSphere = otk::normalize(randomInUnitSphere);
-                newDirection = otk::normalize(newDirection + fuzziness * randomOnUnitSphere);
-                // Catch degenerate case where fuzziness is too high and newDirection is opposite to the normal
-                if (otk::dot(newDirection, worldNormal) < 0.0f)
-                {
-                    newDirection = calculateReflectedDirection(rayDir, worldNormal);
-                }
-            }
-            setRayOrigin(hitPoint);
-            setRayDirection(newDirection);
-            setCuRandStateMRG32k3a(curandState);
-            setRayState(state);
-            setStokesVector(make_float4(1.0f, 0.0f, 0.0f, 0.0f));
-        }
-        else
-        {
-            setRayOrigin(hitPoint);
-            state.absorbed = 1;
-            state.done = 1;
-            setRayState(state);
-        }
-    }
-    else
-    {
-        DBG_LOG_TEXT("Hit refractive or volume scattering material");
-        float4 stokesVector = getStokesVector();
-        float3 qMinusAxis = getQMinusAxis();
-
-        unsigned int nextMedium;
-
-        if (isFrontFace)
-        {
-            nextMedium = instanceId; // Current instance is the next medium
-        }
-        else
-        {
-            if (state.currentMediumHistorySize == 0)
-            {
-                // printf("Warning: Back face but no previous medium in history.\n");
-                nextMedium = 0;
-            }
-            else
-            {
-                if (state.currentMedium == instanceId)
-                { // If the current medium is the same as the instance, we need to step back
-                    if (state.currentMediumHistorySize < 2)
-                    {
-                        nextMedium = 0; // If we are at the first layer, we go back to the default medium
-                    }
-                    else
-                    {
-#if !defined(NDEBUG)
-                        if (state.currentMediumHistorySize - 2 < 0)
-                        {
-                            printf("Error: medium index %d out of bounds [0, 15]\n", state.currentMediumHistorySize - 2);
-                            state.absorbed = 3;
-                            state.done = 1;
-                            setRayState(state);
-                            return;
-                        }
-#endif
-                        nextMedium = getMedium(state.currentMediumHistorySize - 2); // Get the medium one layer back
-                    }
-                }
-                else
-                {
-                    nextMedium = state.currentMedium; // If not, two different media are overlapping, so stay in the current medium
-                    state.numberOfWarnings++;
-                    // printf("Warning: Two different media are overlapping, this leads to ill defined refractive indices of the overlap.\n");
-                }
-            }
-        }
-#if !defined(NDEBUG)
-        if (nextMedium >= MAX_MATERIALS)
-        {
-            printf("Error: next medium index %u out of bounds [0, 16)\n", nextMedium);
-            state.absorbed = 3;
-            state.done = 1;
-            setRayState(state);
-            return;
-        }
-#endif
-        MaterialType nextMaterialType = hgData->materials[nextMedium].type;
-        RefractiveIndex nextRefractiveIndex;
-        if (nextMaterialType == REFRACTIVE)
-        {
-            nextRefractiveIndex = hgData->materials[nextMedium].properties.refractive.refractiveIndex;
-        }
-        else if (nextMaterialType == VOLUME_SCATTERING)
-        {
-            nextRefractiveIndex = hgData->materials[nextMedium].properties.volumeScattering.refractiveIndex;
-        }
-        else
-        {
-            printf("Error: Next medium is not refractive or volume scattering material\n");
-        }
-
-        Complexf nA = Complexf(currentRefractiveIndex.r, currentRefractiveIndex.i);
-        Complexf nB = Complexf(nextRefractiveIndex.r, nextRefractiveIndex.i);
-
-        DBG_LOG_FLOAT("Current index real", currentRefractiveIndex.r);
-        DBG_LOG_FLOAT("Current index imag", currentRefractiveIndex.i);
-        DBG_LOG_FLOAT("Next index real", nextRefractiveIndex.r);
-        DBG_LOG_FLOAT("Next index imag", nextRefractiveIndex.i);
-
-        // material boundary interaction
-        rndSample = curand_uniform(&curandState);
-        bool isReflected;
-        if (params.useComplexFresnel)
-        {
-            isReflected = calculateFresnelInteraction(stokesVector, qMinusAxis, rayDir, worldNormal, nA, nB, rndSample);
-        }
-        else
-        {
-            isReflected = calculateFresnelInteraction(stokesVector, qMinusAxis, rayDir, worldNormal, nA.real(), nB.real(), rndSample);
-        }
-        DBG_LOG_TEXT(isReflected ? "Fresnel: Reflection" : "Fresnel: Transmission");
-        if (!isReflected)
-        {
-            if (isFrontFace)
-            {
-                DBG_LOG_INT("Entering medium", instanceId);
-                bool success = appendMedium(instanceId, state.currentMediumHistorySize);
-                if (!success)
-                {
-                    state.numberOfWarnings++;
-                    DBG_LOG_TEXT("Warning: medium history size exceeded limit");
-                }
-                state.currentMedium = instanceId;
-            }
-            else
-            {
-                DBG_LOG_INT("Exiting medium", instanceId);
-                auto found = removeLastOccurence(instanceId, state.currentMediumHistorySize);
-                if (!found)
-                {
-                    state.numberOfWarnings++;
-                    DBG_LOG_TEXT("Warning: medium not found in history");
-                }
-                state.currentMedium = nextMedium;
-            }
-        }
-
-        if (optixIsTriangleHit())
-        {
-            if (isReflected)
-            {
-                hitPoint = front;
-            }
-            else
-            {
-                hitPoint = back;
-            }
-        }
-
-        setRayOrigin(hitPoint);
-        setRayDirection(rayDir);
-        setStokesVector(stokesVector);
-        setQDirection(qMinusAxis);
-        setCuRandStateMRG32k3a(curandState);
-        setRayState(state);
-    }
+    setCuRandStateMRG32k3a(curandState);
 }
 
 extern "C" __global__ void __closesthit__density()
