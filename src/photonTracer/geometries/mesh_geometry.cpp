@@ -16,13 +16,13 @@
 #include "../i_geometry.h"
 #include "mesh_geometry.h"
 
-MeshGeometry::MeshGeometry(std::vector<float3> vertices, std::vector<unsigned int> indices)
-    : vertices(std::move(vertices)), indices(std::move(indices)) {}
+MeshGeometry::MeshGeometry(std::vector<float3> vertices, std::vector<unsigned int> indices, bool compact)
+    : vertices(std::move(vertices)), indices(std::move(indices)), compact(compact) {}
 void MeshGeometry::build(OptixDeviceContext &context)
 {
     buildGasFromMesh(
         vertices, indices, context,
-        traversableHandle, dGeometryBuffer);
+        traversableHandle, dGeometryBuffer, compact);
     accelerationStructureBuilt = true;
 }
 GeometryType MeshGeometry::getType() const

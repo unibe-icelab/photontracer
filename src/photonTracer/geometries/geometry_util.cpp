@@ -20,7 +20,8 @@ int buildGasFromMesh(
     std::vector<float3> &meshVertices,
     std::vector<uint32_t> &meshIndices,
     OptixDeviceContext &context,
-    OptixTraversableHandle &gasHandle, CUdeviceptr &dGasOutputBuffer)
+    OptixTraversableHandle &gasHandle, CUdeviceptr &dGasOutputBuffer,
+    bool compact)
 {
 
     uint32_t maxPrimitivesPerGas = 0;
@@ -66,7 +67,18 @@ int buildGasFromMesh(
 
     OptixAccelBuildOptions gasAccelOptions = {};
     gasAccelOptions.buildFlags = OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS;
+    if (compact)
+        gasAccelOptions.buildFlags |= OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
     gasAccelOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
+
+    CUdeviceptr dCompactedSize = 0;
+    OptixAccelEmitDesc compactedSizeProperty = {};
+    if (compact)
+    {
+        OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dCompactedSize), sizeof(size_t)));
+        compactedSizeProperty.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+        compactedSizeProperty.result = dCompactedSize;
+    }
 
     OptixAccelBufferSizes gasBufferSizes;
     OTK_ERROR_CHECK(optixAccelComputeMemoryUsage(
@@ -83,7 +95,25 @@ int buildGasFromMesh(
         context, 0, &gasAccelOptions, &triangleInput, 1,
         dTempBufferGas, gasBufferSizes.tempSizeInBytes,
         dGasOutputBuffer, gasBufferSizes.outputSizeInBytes,
-        &gasHandle, nullptr, 0));
+        &gasHandle, compact ? &compactedSizeProperty : nullptr, compact ? 1 : 0));
+
+    if (compact)
+    {
+        // Copy the GAS into a tighter buffer if compaction saves memory.
+        size_t compactedSize = 0;
+        OTK_ERROR_CHECK(cudaMemcpy(&compactedSize, reinterpret_cast<const void *>(dCompactedSize),
+                                   sizeof(size_t), cudaMemcpyDeviceToHost));
+        OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dCompactedSize)));
+
+        if (compactedSize < gasBufferSizes.outputSizeInBytes)
+        {
+            CUdeviceptr dCompactedBuffer = 0;
+            OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dCompactedBuffer), compactedSize));
+            OTK_ERROR_CHECK(optixAccelCompact(context, 0, gasHandle, dCompactedBuffer, compactedSize, &gasHandle));
+            OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dGasOutputBuffer)));
+            dGasOutputBuffer = dCompactedBuffer;
+        }
+    }
 
     // Free temporary buffers and the mesh input (the GAS now owns the geometry).
     OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dTempBufferGas)));

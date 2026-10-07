@@ -23,8 +23,9 @@ public:
      *
      * @param vertices List of vertex positions.
      * @param indices List of triangle indices.
+     * @param compact Compact the acceleration structure to save device memory.
      */
-    MeshGeometry(std::vector<float3> vertices, std::vector<unsigned int> indices);
+    MeshGeometry(std::vector<float3> vertices, std::vector<unsigned int> indices, bool compact = true);
 
     /**
      * @brief Build the OptiX acceleration structure for the mesh.
@@ -44,4 +45,5 @@ public:
 private:
     std::vector<float3> vertices;      ///< Vertex positions of the mesh
     std::vector<unsigned int> indices; ///< Indices defining the mesh triangle faces
+    bool compact;                      ///< Whether the acceleration structure is compacted after the build
 };
