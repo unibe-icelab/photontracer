@@ -607,8 +607,6 @@ PYBIND11_MODULE(photontracer_bindings, m)
             }
 
             const uint3 shape = layout.shape;
-            const size_t elementCount = static_cast<size_t>(shape.x) * shape.y * shape.z;
-            const size_t totalBytes = elementCount * descriptor.elementSize;
 
             auto baseDimensions = [&]() -> std::vector<py::ssize_t>
             {
@@ -647,16 +645,14 @@ PYBIND11_MODULE(photontracer_bindings, m)
 
             auto copyFromDevice = [&](void *hostPtr)
             {
-                if (totalBytes == 0)
+                try
                 {
-                    return;
+                    deviceBuffers->copyToHost(type, hostPtr);
                 }
-                const cudaError_t err = cudaMemcpy(hostPtr, layout.devicePtr, totalBytes, cudaMemcpyDeviceToHost);
-                if (err != cudaSuccess)
+                catch (const std::exception &e)
                 {
-                    const std::string errorMsg = std::string("Failed to copy output buffer '") + descriptor.name +
-                                                 "' from device memory: " + cudaGetErrorString(err);
-                    throw std::runtime_error(errorMsg);
+                    throw std::runtime_error(std::string("Failed to copy output buffer '") + descriptor.name +
+                                             "' from device memory: " + e.what());
                 }
             };
 
