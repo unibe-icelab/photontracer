@@ -6,9 +6,6 @@
 #include <vector>
 #include <string>
 
-#include <optix.h>
-#include <cuda_runtime.h>
-
 #include "../photontracer.h"
 #include "../i_geometry.h"
 
@@ -28,14 +25,6 @@ public:
     MeshGeometry(std::vector<float3> vertices, std::vector<unsigned int> indices, bool compact = true);
 
     /**
-     * @brief Build the OptiX acceleration structure for the mesh.
-     *
-     * @param context The OptiX device context.
-     * @return BuildResult containing the traversable handle and output buffer.
-     */
-    void build(OptixDeviceContext &context) override;
-
-    /**
      * @brief Get the type name of this geometry.
      *
      * @return std::string Type string ("MeshGeometry").
@@ -43,6 +32,10 @@ public:
     GeometryType getType() const override;
 
     void validateMaterialIds(std::size_t materialCount) const override;
+
+    const std::vector<float3> &getVertices() const { return vertices; }
+    const std::vector<unsigned int> &getIndices() const { return indices; }
+    bool isCompact() const { return compact; }
 
 private:
     std::vector<float3> vertices;      ///< Vertex positions of the mesh
