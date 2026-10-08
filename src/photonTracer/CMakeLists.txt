@@ -20,6 +20,7 @@ endif()
 if(PHOTONTRACER_BUILD_EMBREE)
   add_library(PhotonTracerEmbree STATIC embree_raytracing_backend.cpp)
   target_link_libraries(PhotonTracerEmbree PUBLIC PhotonTracerCore embree TBB::tbb)
+  target_compile_options(PhotonTracerEmbree PRIVATE ${PHOTONTRACER_CPU_FASTMATH_FLAGS})
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(PhotonTracerEmbree PRIVATE -Wall -Wextra -Wpedantic)
   endif()
@@ -61,6 +62,13 @@ foreach(RNG IN ITEMS PCG32 MRG32K3A)
       ${CMAKE_CURRENT_LIST_DIR}
   )
   target_compile_definitions(photonTracerKernels${NAME}Cuda PRIVATE PHOTONTRACER_RNG_${RNG})
+
+  if(NOT PHOTONTRACER_USE_FASTMATH)
+    # BuildConfig adds --use_fast_math to every CUDA target. It stands for these four options, and
+    # nvcc takes the last of a repeated option, so the opposites after it switch it off for the kernels.
+    target_compile_options(photonTracerKernels${NAME}Cuda PRIVATE
+      $<$<COMPILE_LANGUAGE:CUDA>:--ftz=false --prec-div=true --prec-sqrt=true --fmad=false>)
+  endif()
 endforeach()
 
 add_library(PhotonTracerOptix STATIC
