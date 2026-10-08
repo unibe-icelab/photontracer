@@ -5,10 +5,23 @@
 
 #include <embree4/rtcore.h>
 
+#include "geometries/instance_geometry.h"
 #include "geometries/mesh_geometry.h"
 #include "i_raytracing_backend.h"
+#include "spawn_point.h"
 
-/// Embree scene of a geometry; it reads the triangles of a hit from the mesh it was built from
+class EmbreeAccelerationStructure;
+
+/// An instance in the scene of an InstanceGeometry; Embree numbers them in the order they were added
+struct EmbreeInstance
+{
+    InstanceTransform transform;
+    unsigned int materialId;
+    const EmbreeAccelerationStructure *child;
+};
+
+/// Embree scene of a geometry. A mesh reads the triangles of a hit from the mesh it was built
+/// from, an InstanceGeometry looks up the instance and the scene a hit belongs to.
 class EmbreeAccelerationStructure : public AccelerationStructure
 {
 public:
@@ -23,6 +36,8 @@ public:
 
     RTCScene scene = nullptr;
     const MeshGeometry *mesh = nullptr;
+    std::vector<EmbreeInstance> instances;
+    unsigned int instanceLevels = 0; ///< how deep instances are nested in this scene
 };
 
 /**
@@ -69,6 +84,8 @@ public:
 
 private:
     const EmbreeAccelerationStructure &accelerationStructure(const IGeometry &geometry) const;
+    void buildMesh(const MeshGeometry &mesh, EmbreeAccelerationStructure &structure);
+    void buildInstances(const InstanceGeometry &instances, EmbreeAccelerationStructure &structure);
     void checkDeviceError(const char *what) const;
 
     RTCDevice device_ = nullptr;

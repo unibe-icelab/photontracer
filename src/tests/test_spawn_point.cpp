@@ -90,7 +90,13 @@ struct Hit
     float u, v;
 };
 
-Hit trace(RTCScene scene, float3 origin, float3 direction)
+struct InstanceHit
+{
+    Hit hit;
+    unsigned int instances[RTC_MAX_INSTANCE_LEVEL_COUNT];
+};
+
+Hit trace(RTCScene scene, float3 origin, float3 direction, InstanceHit *instanceHit = nullptr)
 {
     RTCRayHit rayHit = {};
     rayHit.ray.org_x = origin.x;
@@ -103,8 +109,43 @@ Hit trace(RTCScene scene, float3 origin, float3 direction)
     rayHit.ray.mask = 0xFFFFFFFFu;
     rayHit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
     rayHit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+    for (unsigned int level = 0; level < RTC_MAX_INSTANCE_LEVEL_COUNT; ++level)
+    {
+        rayHit.hit.instID[level] = RTC_INVALID_GEOMETRY_ID;
+    }
     rtcIntersect1(scene, &rayHit);
-    return {rayHit.hit.geomID != RTC_INVALID_GEOMETRY_ID, rayHit.hit.primID, rayHit.ray.tfar, rayHit.hit.u, rayHit.hit.v};
+    const Hit hit = {rayHit.hit.geomID != RTC_INVALID_GEOMETRY_ID, rayHit.hit.primID, rayHit.ray.tfar, rayHit.hit.u, rayHit.hit.v};
+    if (instanceHit)
+    {
+        instanceHit->hit = hit;
+        std::copy(rayHit.hit.instID, rayHit.hit.instID + RTC_MAX_INSTANCE_LEVEL_COUNT, instanceHit->instances);
+    }
+    return hit;
+}
+
+RTCScene meshScene(RTCDevice device, const Mesh &mesh)
+{
+    RTCGeometry geometry = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
+    float *vertices = static_cast<float *>(rtcSetNewGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3,
+                                                                   sizeof(float3), mesh.vertices.size()));
+    unsigned int *indices = static_cast<unsigned int *>(rtcSetNewGeometryBuffer(geometry, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3,
+                                                                                3 * sizeof(unsigned int), mesh.indices.size() / 3));
+    std::copy(&mesh.vertices[0].x, &mesh.vertices[0].x + 3 * mesh.vertices.size(), vertices);
+    std::copy(mesh.indices.begin(), mesh.indices.end(), indices);
+    rtcCommitGeometry(geometry);
+    RTCScene scene = rtcNewScene(device);
+    rtcSetSceneFlags(scene, RTC_SCENE_FLAG_ROBUST);
+    rtcAttachGeometry(scene, geometry);
+    rtcReleaseGeometry(geometry);
+    rtcCommitScene(scene);
+    return scene;
+}
+
+float3 applyTransform(const InstanceTransform &transform, float3 p)
+{
+    const float *m = transform.matrix;
+    return make_float3(m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3], m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7],
+                       m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]);
 }
 // Traces random rays at a cube and spawns from the first hit. Returns the number of rays that hit.
 int checkSpawnPoints(RTCDevice device, std::mt19937 &gen, float scale, float distance, float3 stretch, bool axisAligned)
@@ -124,19 +165,7 @@ int checkSpawnPoints(RTCDevice device, std::mt19937 &gen, float scale, float dis
         vertex = place(vertex);
     }
 
-    RTCGeometry geometry = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
-    float *vertices = static_cast<float *>(rtcSetNewGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3,
-                                                                   sizeof(float3), mesh.vertices.size()));
-    unsigned int *indices = static_cast<unsigned int *>(rtcSetNewGeometryBuffer(geometry, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3,
-                                                                                3 * sizeof(unsigned int), mesh.indices.size() / 3));
-    std::copy(&mesh.vertices[0].x, &mesh.vertices[0].x + 3 * mesh.vertices.size(), vertices);
-    std::copy(mesh.indices.begin(), mesh.indices.end(), indices);
-    rtcCommitGeometry(geometry);
-    RTCScene scene = rtcNewScene(device);
-    rtcSetSceneFlags(scene, RTC_SCENE_FLAG_ROBUST);
-    rtcAttachGeometry(scene, geometry);
-    rtcReleaseGeometry(geometry);
-    rtcCommitScene(scene);
+    RTCScene scene = meshScene(device, mesh);
 
     int hits = 0;
     for (int i = 0; i < 20000; ++i)
@@ -156,11 +185,11 @@ int checkSpawnPoints(RTCDevice device, std::mt19937 &gen, float scale, float dis
 
         // The reflected ray leaves a convex mesh from the outside, so it must not hit anything
         const float3 reflected = direction - spawn.normal * (2.0f * otk::dot(direction, spawn.normal));
-        EXPECT_FALSE(trace(scene, entering ? spawn.front : spawn.back, reflected).found)
+        EXPECT_FALSE(trace(scene, entering ? spawn.front() : spawn.back(), reflected).found)
             << "scale " << scale << " distance " << distance << " axis aligned " << axisAligned << " stretch " << stretch.y << " " << stretch.z;
 
         // The transmitted ray goes on to another triangle
-        const Hit second = trace(scene, entering ? spawn.back : spawn.front, direction);
+        const Hit second = trace(scene, entering ? spawn.back() : spawn.front(), direction);
         EXPECT_TRUE(second.found && second.primitive != first.primitive)
             << "scale " << scale << " distance " << distance << " axis aligned " << axisAligned << " stretch " << stretch.y << " " << stretch.z;
     }
@@ -195,5 +224,126 @@ TEST(SpawnPoint, DoesNotHitTheTriangleItLeft)
         }
     }
     EXPECT_GT(hits, 300000);
+    rtcReleaseDevice(device);
+}
+
+// Random rotation, stretch, scale and shift as the 3x4 matrix of an instance
+InstanceTransform randomTransform(std::mt19937 &gen, float scale, float distance, float3 stretch)
+{
+    float rotation[9];
+    randomRotation(gen, rotation);
+    float matrix[12];
+    for (int row = 0; row < 3; ++row)
+    {
+        const float s[3] = {stretch.x, stretch.y, stretch.z};
+        for (int column = 0; column < 3; ++column)
+        {
+            matrix[4 * row + column] = rotation[3 * row + column] * s[column] * scale;
+        }
+    }
+    matrix[3] = distance * scale;
+    matrix[7] = -0.7f * distance * scale;
+    matrix[11] = 0.3f * distance * scale;
+    InstanceTransform transform;
+    EXPECT_TRUE(makeInstanceTransform(matrix, transform));
+    return transform;
+}
+
+// A cube placed in the world by `levels` nested instances. Returns the number of rays that hit.
+int checkNestedSpawnPoints(RTCDevice device, std::mt19937 &gen, int levels, float scale, float distance, float3 stretch)
+{
+    std::uniform_real_distribution<float> uniform(-1.0f, 1.0f);
+    const Mesh cubeMesh = cube(8);
+
+    // transforms[0] is the innermost instance
+    std::vector<InstanceTransform> transforms;
+    std::vector<RTCScene> scenes = {meshScene(device, cubeMesh)};
+    for (int level = 0; level < levels; ++level)
+    {
+        transforms.push_back(randomTransform(gen, level == 0 ? scale : 1.0f, level == 0 ? distance : 1.0f, level == 0 ? stretch : make_float3(1, 1, 1)));
+        RTCGeometry instance = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE);
+        rtcSetGeometryInstancedScene(instance, scenes.back());
+        rtcSetGeometryTransform(instance, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, transforms.back().matrix);
+        rtcCommitGeometry(instance);
+        RTCScene scene = rtcNewScene(device);
+        rtcSetSceneFlags(scene, RTC_SCENE_FLAG_ROBUST);
+        rtcAttachGeometry(scene, instance);
+        rtcReleaseGeometry(instance);
+        rtcCommitScene(scene);
+        scenes.push_back(scene);
+    }
+    auto toWorld = [&](float3 p)
+    {
+        for (const InstanceTransform &transform : transforms)
+        {
+            p = applyTransform(transform, p);
+        }
+        return p;
+    };
+    // The cube is at most this far from its center in the world
+    float radius = 0.0f;
+    for (float3 corner : {make_float3(1, 1, 1), make_float3(-1, 1, 1), make_float3(1, -1, 1), make_float3(1, 1, -1)})
+    {
+        const float3 d = toWorld(corner) - toWorld(make_float3(0, 0, 0));
+        radius = std::fmax(radius, otk::length(d));
+    }
+
+    int hits = 0;
+    for (int i = 0; i < 20000; ++i)
+    {
+        const float3 target = toWorld(make_float3(uniform(gen), uniform(gen), uniform(gen)));
+        const float3 direction = otk::normalize(make_float3(uniform(gen), uniform(gen), uniform(gen)));
+        InstanceHit first;
+        trace(scenes.back(), target - direction * (3.0f * radius), direction, &first);
+        if (!first.hit.found)
+        {
+            continue;
+        }
+        ++hits;
+
+        const unsigned int *t = &cubeMesh.indices[3 * first.hit.primitive];
+        SpawnPoint spawn = triangleSpawnPoint(cubeMesh.vertices[t[0]], cubeMesh.vertices[t[1]], cubeMesh.vertices[t[2]], first.hit.u, first.hit.v);
+        for (const InstanceTransform &transform : transforms)
+        {
+            spawn = transformSpawnPoint(spawn, transform);
+        }
+        const bool entering = otk::dot(direction, spawn.normal) < 0.0f;
+
+        const float3 reflected = direction - spawn.normal * (2.0f * otk::dot(direction, spawn.normal));
+        const Hit again = trace(scenes.back(), entering ? spawn.front() : spawn.back(), reflected);
+        EXPECT_FALSE(again.found) << "levels " << levels << " scale " << scale << " distance " << distance << " stretch " << stretch.y << " " << stretch.z;
+
+        const Hit second = trace(scenes.back(), entering ? spawn.back() : spawn.front(), direction);
+        EXPECT_TRUE(second.found && second.primitive != first.hit.primitive)
+            << "levels " << levels << " scale " << scale << " distance " << distance << " stretch " << stretch.y << " " << stretch.z;
+    }
+    for (RTCScene scene : scenes)
+    {
+        rtcReleaseScene(scene);
+    }
+    return hits;
+}
+
+// The same as above for meshes that are placed by one or more instance transforms
+TEST(SpawnPoint, DoesNotHitTheTriangleItLeftThroughInstances)
+{
+    RTCDevice device = rtcNewDevice(nullptr);
+    std::mt19937 gen(4321);
+
+    int hits = 0;
+    for (int levels : {1, 2})
+    {
+        for (float scale : {1e-3f, 1.0f, 1e3f})
+        {
+            for (float distance : {0.0f, 10.0f, 1e3f})
+            {
+                for (float3 stretch : {make_float3(1, 1, 1), make_float3(1, 0.03f, 30)})
+                {
+                    hits += checkNestedSpawnPoints(device, gen, levels, scale, distance, stretch);
+                }
+            }
+        }
+    }
+    EXPECT_GT(hits, 200000);
     rtcReleaseDevice(device);
 }

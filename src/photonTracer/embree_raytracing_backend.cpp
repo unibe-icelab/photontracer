@@ -29,7 +29,8 @@ struct TriangleHit
 {
     bool found;
     float distance;
-    SpawnPoint spawn;
+    SpawnPoint spawn;      // in world space
+    unsigned int material; // of the innermost instance
     bool isFrontFace;
 };
 
@@ -46,7 +47,10 @@ TriangleHit intersect(const EmbreeAccelerationStructure &structure, float3 origi
     rayHit.ray.tfar = MAX_DISTANCE;
     rayHit.ray.mask = 0xFFFFFFFFu;
     rayHit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-    rayHit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+    for (unsigned int level = 0; level < RTC_MAX_INSTANCE_LEVEL_COUNT; ++level)
+    {
+        rayHit.hit.instID[level] = RTC_INVALID_GEOMETRY_ID;
+    }
     rtcIntersect1(structure.scene, &rayHit);
 
     TriangleHit result = {};
@@ -55,12 +59,29 @@ TriangleHit intersect(const EmbreeAccelerationStructure &structure, float3 origi
         return result;
     }
 
-    const std::vector<float3> &vertices = structure.mesh->getVertices();
-    const unsigned int *triangle = &structure.mesh->getIndices()[3 * static_cast<size_t>(rayHit.hit.primID)];
+    // Follow the instances of the hit, outermost first, down to the scene of the triangle
+    const EmbreeAccelerationStructure *leaf = &structure;
+    const EmbreeInstance *path[RTC_MAX_INSTANCE_LEVEL_COUNT];
+    unsigned int depth = 0;
+    result.material = 1; // a plain mesh uses material 1 for its inside
+    while (depth < RTC_MAX_INSTANCE_LEVEL_COUNT && rayHit.hit.instID[depth] != RTC_INVALID_GEOMETRY_ID)
+    {
+        const EmbreeInstance &instance = leaf->instances[rayHit.hit.instID[depth]];
+        path[depth++] = &instance;
+        result.material = instance.materialId;
+        leaf = instance.child;
+    }
+
+    const std::vector<float3> &vertices = leaf->mesh->getVertices();
+    const unsigned int *triangle = &leaf->mesh->getIndices()[3 * static_cast<size_t>(rayHit.hit.primID)];
     result.found = true;
     result.distance = rayHit.ray.tfar;
     result.spawn = triangleSpawnPoint(vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]],
                                       rayHit.hit.u, rayHit.hit.v);
+    for (unsigned int level = depth; level-- > 0;)
+    {
+        result.spawn = transformSpawnPoint(result.spawn, path[level]->transform);
+    }
     // Front faces are those whose vertices run counter-clockwise as seen by the ray
     result.isFrontFace = otk::dot(result.spawn.normal, direction) < 0.0f;
     return result;
@@ -107,10 +128,10 @@ void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupD
         hit.rayOrigin = prd.origin;
         hit.rayDirection = prd.direction;
         hit.maxDistance = trace.distance;
-        hit.instanceId = 1; // a plain mesh uses material 1 for its inside
+        hit.instanceId = trace.material;
         hit.hitPoint = trace.spawn.position;
-        hit.front = trace.spawn.front;
-        hit.back = trace.spawn.back;
+        hit.front = trace.spawn.front();
+        hit.back = trace.spawn.back();
         hit.worldNormal = trace.spawn.normal;
         hit.isFrontFace = trace.isFrontFace;
         if (otk::dot(hit.worldNormal, hit.rayDirection) > 0.0f)
@@ -152,7 +173,7 @@ int32_t countSurfaceCrossings(const EmbreeAccelerationStructure &structure, cons
         }
         (trace.isFrontFace ? frontFaces : backFaces)++;
         // Continue straight on the far side of the surface
-        origin = otk::dot(trace.spawn.normal, direction) > 0.0f ? trace.spawn.front : trace.spawn.back;
+        origin = otk::dot(trace.spawn.normal, direction) > 0.0f ? trace.spawn.front() : trace.spawn.back();
     }
     return backFaces - frontFaces;
 }
@@ -193,7 +214,7 @@ void EmbreeRaytracingBackend::checkDeviceError(const char *what) const
 
 uint32_t EmbreeRaytracingBackend::getMaxTraversableGraphDepth() const
 {
-    return 1;
+    return RTC_MAX_INSTANCE_LEVEL_COUNT + 1; // the instances and the mesh
 }
 
 uint32_t EmbreeRaytracingBackend::getMaxSubGeometries() const
@@ -233,12 +254,24 @@ void EmbreeRaytracingBackend::copyBufferToHost(void *host, const void *buffer, s
 
 void EmbreeRaytracingBackend::buildGeometry(IGeometry &geometry)
 {
-    if (geometry.getType() != MESH)
+    auto structure = std::make_unique<EmbreeAccelerationStructure>(static_cast<const IRaytracingBackend *>(this));
+    switch (geometry.getType())
     {
-        throw std::runtime_error("The Embree backend only supports mesh geometries so far");
+    case MESH:
+        buildMesh(static_cast<const MeshGeometry &>(geometry), *structure);
+        break;
+    case MESH_INSTANCED:
+        buildInstances(static_cast<const InstanceGeometry &>(geometry), *structure);
+        break;
+    default:
+        throw std::runtime_error("Unknown geometry type");
     }
-    const MeshGeometry &mesh = static_cast<const MeshGeometry &>(geometry);
+    checkDeviceError("build the geometry");
+    geometry.setAccelerationStructure(std::move(structure));
+}
 
+void EmbreeRaytracingBackend::buildMesh(const MeshGeometry &mesh, EmbreeAccelerationStructure &structure)
+{
     RTCGeometry triangles = rtcNewGeometry(device_, RTC_GEOMETRY_TYPE_TRIANGLE);
     const size_t vertexCount = mesh.getVertices().size();
     const size_t triangleCount = mesh.getIndices().size() / 3;
@@ -258,18 +291,74 @@ void EmbreeRaytracingBackend::buildGeometry(IGeometry &geometry)
     std::memcpy(indices, mesh.getIndices().data(), triangleCount * 3 * sizeof(unsigned int));
     rtcCommitGeometry(triangles);
 
-    auto structure = std::make_unique<EmbreeAccelerationStructure>(static_cast<const IRaytracingBackend *>(this));
-    structure->mesh = &mesh;
-    structure->scene = rtcNewScene(device_);
+    structure.mesh = &mesh;
+    structure.scene = rtcNewScene(device_);
     // Watertight intersection; hits that slip through gaps would let rays leave a closed surface
-    rtcSetSceneFlags(structure->scene, RTC_SCENE_FLAG_ROBUST | (mesh.isCompact() ? RTC_SCENE_FLAG_COMPACT : RTC_SCENE_FLAG_NONE));
-    rtcSetSceneBuildQuality(structure->scene, RTC_BUILD_QUALITY_HIGH);
-    rtcAttachGeometry(structure->scene, triangles);
+    rtcSetSceneFlags(structure.scene, RTC_SCENE_FLAG_ROBUST | (mesh.isCompact() ? RTC_SCENE_FLAG_COMPACT : RTC_SCENE_FLAG_NONE));
+    rtcSetSceneBuildQuality(structure.scene, RTC_BUILD_QUALITY_HIGH);
+    rtcAttachGeometry(structure.scene, triangles);
     rtcReleaseGeometry(triangles);
-    rtcCommitScene(structure->scene);
-    checkDeviceError("build the mesh");
+    rtcCommitScene(structure.scene);
+}
 
-    geometry.setAccelerationStructure(std::move(structure));
+void EmbreeRaytracingBackend::buildInstances(const InstanceGeometry &instances, EmbreeAccelerationStructure &structure)
+{
+    const auto &subGeometries = instances.getSubGeometries();
+    for (const auto &subGeometry : subGeometries)
+    {
+        if (!subGeometry->isBuiltBy(static_cast<const IRaytracingBackend *>(this)))
+        {
+            buildGeometry(*subGeometry);
+        }
+    }
+
+    const std::vector<float> &matrices = instances.getInstanceTransforms();
+    const size_t instanceCount = matrices.size() / 12;
+    structure.instances.reserve(instanceCount);
+    structure.scene = rtcNewScene(device_);
+    rtcSetSceneFlags(structure.scene, RTC_SCENE_FLAG_ROBUST);
+    rtcSetSceneBuildQuality(structure.scene, RTC_BUILD_QUALITY_HIGH);
+
+    unsigned int deepestChild = 0;
+    for (size_t i = 0; i < instanceCount; ++i)
+    {
+        const unsigned int particleTypeId = instances.getParticleTypeIds()[i];
+        if (particleTypeId >= subGeometries.size())
+        {
+            throw std::runtime_error("Particle type ID out of bounds for subGeometries.");
+        }
+        const auto &child = *static_cast<const EmbreeAccelerationStructure *>(subGeometries[particleTypeId]->getAccelerationStructure());
+        deepestChild = std::max(deepestChild, child.instanceLevels);
+
+        EmbreeInstance instance;
+        if (!makeInstanceTransform(&matrices[12 * i], instance.transform))
+        {
+            throw std::invalid_argument("The transform of instance " + std::to_string(i) + " is singular");
+        }
+        instance.materialId = instances.getMaterialIds()[i];
+        instance.child = &child;
+        structure.instances.push_back(instance);
+
+        RTCGeometry geometry = rtcNewGeometry(device_, RTC_GEOMETRY_TYPE_INSTANCE);
+        rtcSetGeometryInstancedScene(geometry, child.scene);
+        rtcSetGeometryTransform(geometry, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, instance.transform.matrix);
+        rtcCommitGeometry(geometry);
+        const unsigned int id = rtcAttachGeometry(structure.scene, geometry);
+        rtcReleaseGeometry(geometry);
+        if (id != i)
+        {
+            throw std::runtime_error("Embree numbered the instances in another order");
+        }
+    }
+
+    structure.instanceLevels = deepestChild + 1;
+    if (structure.instanceLevels > RTC_MAX_INSTANCE_LEVEL_COUNT)
+    {
+        throw std::runtime_error("Instances are nested " + std::to_string(structure.instanceLevels) +
+                                 " levels deep, but this build of the Embree backend supports " +
+                                 std::to_string(RTC_MAX_INSTANCE_LEVEL_COUNT));
+    }
+    rtcCommitScene(structure.scene);
 }
 
 const EmbreeAccelerationStructure &EmbreeRaytracingBackend::accelerationStructure(const IGeometry &geometry) const
