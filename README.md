@@ -87,7 +87,7 @@ pip install . -C cmake.define.PHOTONTRACER_BUILD_OPTIX=OFF
 sim = photontracer.Simulation(backend=photontracer.Backend.EMBREE, cpu_threads=8)
 ```
 
-`cpu_threads=0` (the default) uses all cores. The Embree backend supports only the PCG32 generator so far, and not yet the outputs `LOGS`, `LOG_OFFSETS` and `DIRECTION_HISTOGRAM_HEALPIX`. Instances can be nested up to the CMake setting `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` (default 4); `Simulation.max_nested_geometry_levels` is limited to that plus one.
+`cpu_threads=0` (the default) uses all cores. The Embree backend supports only the PCG32 generator so far, and not yet the outputs `LOGS` and `LOG_OFFSETS`. Instances can be nested up to the CMake setting `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` (default 4); `Simulation.max_nested_geometry_levels` is limited to that plus one.
 
 ### Random number generator
 
