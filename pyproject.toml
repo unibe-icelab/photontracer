@@ -1,6 +1,6 @@
 [project]
 name = "photontracer"
-version = "1.0.2"
+version = "1.0.1"
 description = "PhotonTracer: Light scattering simulation"
 authors = [{name = "Rafael Ottersberg", email = "rafael.ottersberg@gmx.ch"}]
 readme = "README.md"
@@ -29,9 +29,7 @@ wheel.license-files = [
   "external/otk/Memory/LICENSE.txt",
   "external/optix/LICENSE.txt",
   "external/optix/license_info.txt",
-  "external/pybind11/LICENSE",
-  "external/embree/LICENSE.txt",
-  "external/embree/third-party-programs.txt"
+  "external/pybind11/LICENSE"
 ]
 
 [project.optional-dependencies]

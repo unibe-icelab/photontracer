@@ -8,4 +8,3 @@ dependencies:
   - ninja
   - cuda-toolkit=12.4
   - gtest
-  - tbb-devel

@@ -23,10 +23,3 @@ PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
 OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
----
-
-The Embree backend uses Embree (Copyright Intel Corporation, Apache License 2.0), included as a submodule in
-`external/embree`, and oneTBB (Copyright Intel Corporation, Apache License 2.0), which is linked
-dynamically. The license of Embree and the notices of its third-party components are in
-`external/embree/LICENSE.txt` and `external/embree/third-party-programs.txt`.

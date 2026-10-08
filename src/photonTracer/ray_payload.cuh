@@ -4,19 +4,34 @@
 #include <cuda_runtime.h>
 #include <optix.h>
 #include <optix_device.h>
+#include <curand_kernel.h>
 #include <cstdint>
 #include <array>
 
-#include "light_scattering.h"
-#include "ray_context.h"
-#include "optix_rand_state.h"
+#include "light_scattering.cuh"
 
 #pragma once
 
-// RayData plus the random number generator state that travels with the ray through the payload
-struct OptixRayData : RayData
+struct RayState
 {
-    RandState randState;
+    uint32_t numberOfWarnings;         // 21 bit (0-2097151)
+    uint32_t currentMedium;            // 4 bit (0-15)
+    uint32_t currentMediumHistorySize; // 4 bit (0-15)
+    uint32_t absorbed;                 // 2 bit (0-15)
+    bool done;                         // 1 bit
+};
+
+struct RayData
+{
+    float3 direction;
+    float3 origin;
+    float4 stokesVector;
+    float3 qMinusAxis;
+    double opticalPathLength;
+
+    curandStateMRG32k3a randState;
+    RayState state;
+    uint32_t mediumHistory[8]; // 8 layers of history, each 4 bits
 };
 
 struct DensityData
@@ -93,6 +108,68 @@ static __forceinline__ __device__ RayState unpackRayState(uint32_t packedState)
     state.currentMediumHistorySize = (packedState >> 3) & 0xF; // Extract 4 bits for currentMediumHistorySize
     state.absorbed = (packedState >> 1) & 0x3;                 // Extract 2 bits for absorbed
     state.done = (packedState & 0x1) != 0;                     // Extract the last bit for done
+    return state;
+}
+
+// Function to save the state, boxmuller flag and boxmuller extra not saved
+static __forceinline__ __device__ void packCuRandStateMRG32k3a(const curandStateMRG32k3a *state, uint32_t *statePacked)
+{
+    // Copy each of the 6 internal state variables into storage
+    statePacked[0] = state->s1[0];
+    statePacked[1] = state->s1[1];
+    statePacked[2] = state->s1[2];
+    statePacked[3] = state->s2[0];
+    statePacked[4] = state->s2[1];
+    statePacked[5] = state->s2[2];
+}
+
+// Function to restore the state of curandStateMRG32k3a from 6 uint32_ts, boxmuller flag and boxmuller extra not restored
+static __forceinline__ __device__ curandStateMRG32k3a unpackCuRandStateMRG32k3a(uint32_t *statePacked)
+{
+    curandStateMRG32k3a state;
+    state.s1[0] = statePacked[0];
+    state.s1[1] = statePacked[1];
+    state.s1[2] = statePacked[2];
+    state.s2[0] = statePacked[3];
+    state.s2[1] = statePacked[4];
+    state.s2[2] = statePacked[5];
+
+    state.boxmuller_flag = 0;
+    state.boxmuller_extra = 0.0f;
+    state.boxmuller_flag_double = 0;
+    state.boxmuller_extra_double = 0.0;
+
+    return state;
+}
+
+// function to save the state of curandStateXORWOW, boxmuller flag and boxmuller extra not saved
+static __forceinline__ __device__ void packCuRandStateXORWOW(const curandStateXORWOW *state, uint32_t *statePacked)
+{
+    // Copy each of the 6 internal state variables into storage
+    statePacked[0] = state->d;
+    statePacked[1] = state->v[0];
+    statePacked[2] = state->v[1];
+    statePacked[3] = state->v[2];
+    statePacked[4] = state->v[3];
+    statePacked[5] = state->v[4];
+}
+
+// Function to restore the state of curandStateXORWOW from 6 uint32_ts, boxmuller flag and boxmuller extra not restored
+static __forceinline__ __device__ curandStateXORWOW unpackCuRandStateXORWOW(uint32_t *statePacked)
+{
+    curandStateXORWOW state;
+    state.d = statePacked[0];
+    state.v[0] = statePacked[1];
+    state.v[1] = statePacked[2];
+    state.v[2] = statePacked[3];
+    state.v[3] = statePacked[4];
+    state.v[4] = statePacked[5];
+
+    state.boxmuller_flag = 0;
+    state.boxmuller_extra = 0.0f;
+    state.boxmuller_flag_double = 0;
+    state.boxmuller_extra_double = 0.0;
+
     return state;
 }
 
@@ -210,65 +287,60 @@ static __forceinline__ __device__ bool removeLastOccurence(uint32_t medium, uint
     return found;
 }
 
+static __forceinline__ __device__ curandStateMRG32k3a getCuRandStateMRG32k3a()
+{
+    uint32_t statePacked[6];
+    statePacked[0] = optixGetPayload_15();
+    statePacked[1] = optixGetPayload_16();
+    statePacked[2] = optixGetPayload_17();
+    statePacked[3] = optixGetPayload_18();
+    statePacked[4] = optixGetPayload_19();
+    statePacked[5] = optixGetPayload_20();
+    return unpackCuRandStateMRG32k3a(statePacked);
+}
+
+static __forceinline__ __device__ void setCuRandStateMRG32k3a(const curandStateMRG32k3a &randState)
+{
+    uint32_t statePacked[6];
+    packCuRandStateMRG32k3a(&randState, statePacked);
+    optixSetPayload_15(statePacked[0]);
+    optixSetPayload_16(statePacked[1]);
+    optixSetPayload_17(statePacked[2]);
+    optixSetPayload_18(statePacked[3]);
+    optixSetPayload_19(statePacked[4]);
+    optixSetPayload_20(statePacked[5]);
+}
+
+static __forceinline__ __device__ void setCuRandStateXORWOW(const curandStateXORWOW &randState)
+{
+    uint32_t statePacked[6];
+    packCuRandStateXORWOW(&randState, statePacked);
+    optixSetPayload_15(statePacked[0]);
+    optixSetPayload_16(statePacked[1]);
+    optixSetPayload_17(statePacked[2]);
+    optixSetPayload_18(statePacked[3]);
+    optixSetPayload_19(statePacked[4]);
+    optixSetPayload_20(statePacked[5]);
+}
+
+static __forceinline__ __device__ curandStateXORWOW getCuRandStateXORWOW()
+{
+    uint32_t statePacked[6];
+    statePacked[0] = optixGetPayload_15();
+    statePacked[1] = optixGetPayload_16();
+    statePacked[2] = optixGetPayload_17();
+    statePacked[3] = optixGetPayload_18();
+    statePacked[4] = optixGetPayload_19();
+    statePacked[5] = optixGetPayload_20();
+    return unpackCuRandStateXORWOW(statePacked);
+}
+
 static __forceinline__ __device__ float getOpticalPathLength()
 {
-    return __uint_as_float(optixGetPayload_15());
+    return __uint_as_float(optixGetPayload_21());
 }
 
 static __forceinline__ __device__ void setOpticalPathLength(const float &opl)
 {
-    optixSetPayload_15(__float_as_uint(opl));
+    optixSetPayload_21(__float_as_uint(opl));
 }
-
-// The generator state follows the optical path length, from payload value 16
-// Templates, so that the branch for the larger state is dropped, not just skipped, with the smaller one
-template <int WORDS = RAND_STATE_WORDS>
-static __forceinline__ __device__ RandState getRandState()
-{
-    uint32_t words[WORDS];
-    words[0] = optixGetPayload_16();
-    words[1] = optixGetPayload_17();
-    words[2] = optixGetPayload_18();
-    words[3] = optixGetPayload_19();
-    if constexpr (WORDS > 4)
-    {
-        words[4] = optixGetPayload_20();
-        words[5] = optixGetPayload_21();
-    }
-    return unpackRandState(words);
-}
-
-template <int WORDS = RAND_STATE_WORDS>
-static __forceinline__ __device__ void setRandState(const RandState &randState)
-{
-    uint32_t words[WORDS];
-    packRandState(randState, words);
-    optixSetPayload_16(words[0]);
-    optixSetPayload_17(words[1]);
-    optixSetPayload_18(words[2]);
-    optixSetPayload_19(words[3]);
-    if constexpr (WORDS > 4)
-    {
-        optixSetPayload_20(words[4]);
-        optixSetPayload_21(words[5]);
-    }
-}
-
-// Ray context backed by the payload registers of the current OptiX program
-struct OptixPayloadRayContext
-{
-    __device__ float3 getOrigin() const { return getRayOrigin(); }
-    __device__ void setOrigin(float3 origin) const { setRayOrigin(origin); }
-    __device__ float3 getDirection() const { return getRayDirection(); }
-    __device__ void setDirection(float3 direction) const { setRayDirection(direction); }
-    __device__ float4 getStokesVector() const { return ::getStokesVector(); }
-    __device__ void setStokesVector(float4 stokesVector) const { ::setStokesVector(stokesVector); }
-    __device__ float3 getQMinusAxis() const { return ::getQMinusAxis(); }
-    __device__ void setQMinusAxis(float3 qMinusAxis) const { setQDirection(qMinusAxis); }
-    __device__ RayState getState() const { return getRayState(); }
-    __device__ void setState(RayState state) const { setRayState(state); }
-    __device__ uint32_t getMedium(uint32_t index) const { return ::getMedium(index); }
-    __device__ bool appendMedium(uint32_t medium, uint32_t &historySize) const { return ::appendMedium(medium, historySize); }
-    __device__ bool removeLastOccurence(uint32_t medium, uint32_t &historySize) const { return ::removeLastOccurence(medium, historySize); }
-    __device__ void setLastSegmentOpticalPathLength(float length) const { setOpticalPathLength(length); }
-};

@@ -4,16 +4,14 @@
 #include <optix.h>
 #include "photontracer.h"
 
-class OptixRayTracingPipeline
+class RayTracingPipeline
 {
 public:
-    OptixRayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm,
-                            uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator)
-        : generator_(generator)
+    RayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth = 1)
     {
         initialize(context, materials, wavelengthUm, maxTraversableGraphDepth);
     }
-    ~OptixRayTracingPipeline();
+    ~RayTracingPipeline();
 
     void updateShaderBindingTable(const std::vector<Material> materials, const float wavelengthUm);
 
@@ -34,7 +32,6 @@ private:
     CUdeviceptr missRecord_ = 0;
     CUdeviceptr hitgroupRecord_ = 0;
 
-    RandomNumberGenerator generator_; ///< selects the kernel module
     uint32_t maxTraversableGraphDepth_ = 1;
     const uint32_t maxTraceDepth_ = 1; // no recursion, we use iterative path tracing
 
@@ -52,15 +49,14 @@ private:
     void cleanupShaderBindingTable();
 };
 
-class OptixVolumeFractionPipeline
+class VolumeFractionPipeline
 {
 public:
-    OptixVolumeFractionPipeline(const OptixDeviceContext context, uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator)
-        : generator_(generator)
+    VolumeFractionPipeline(const OptixDeviceContext context, uint32_t maxTraversableGraphDepth = 1)
     {
         initialize(context, maxTraversableGraphDepth);
     }
-    ~OptixVolumeFractionPipeline();
+    ~VolumeFractionPipeline();
 
     void launch(InputParametersSampleDensity &params);
 
@@ -79,7 +75,6 @@ private:
     CUdeviceptr missRecord_ = 0;
     CUdeviceptr hitgroupRecord_ = 0;
 
-    RandomNumberGenerator generator_; ///< selects the kernel module
     uint32_t maxTraversableGraphDepth_ = 1;
     const uint32_t maxTraceDepth_ = 1; // no recursion, we use iterative path tracing
 

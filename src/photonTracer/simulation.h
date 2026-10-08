@@ -6,18 +6,50 @@
 
 #pragma once
 
+#include <optix.h>
 #include <memory>
 #include "i_geometry.h"
 #include "ray_generator.h"
-#include "i_raytracing_backend.h"
+#include "raytracing_pipeline.h"
 #include "raytracing_output.h"
 #include "output_buffers.h"
 
 class Simulation
 {
 public:
-    explicit Simulation(std::unique_ptr<IRaytracingBackend> backend);
+    Simulation(int gpuId = 0, int optixLoggingLevel = 1, bool enableValidationMode = false);
     ~Simulation();
+
+    /**
+     * Callback function for OptiX logging.
+     * @param level The logging level.
+     * @param tag The tag for the log message.
+     * @param message The log message.
+     * @param cbdata User data passed to the callback.
+     */
+    static void contextLogCb(uint32_t level, const char *tag,
+                             const char *message, void * /*cbdata*/);
+
+    /**
+     * Initialize CUDA, select GPU, and create an OptiX device context.
+     * @param gpuId The ID of the GPU to use (0-based).
+     * @param optixLoggingLevel The logging level for OptiX (0-4).
+     * @param enableValidationMode Enable OptiX validation mode if true.
+     * @returns 0 on success, non-zero on failure.
+     */
+    void initializeContext(int gpuId, int optixLoggingLevel = 1, bool enableValidationMode = false);
+
+    /**
+     * Get the OptiX device context.
+     * @returns The OptiX device context.
+     */
+    OptixDeviceContext getContext() const { return context_; }
+
+    /**
+     * Build the geometry for the simulation. This is done recursively for nested geometries.
+     * @param geometry Pointer to the geometry object.
+     */
+    void buildGeometry(std::shared_ptr<IGeometry> geometry);
 
     /**
      * Set the geometry for the simulation.
@@ -148,10 +180,6 @@ public:
      * Set whether to use complex Fresnel equations.
      * @param useComplexFresnel True to use complex Fresnel equations, false otherwise
      */
-    void setRandomNumberGenerator(RandomNumberGenerator generator);
-
-    RandomNumberGenerator getRandomNumberGenerator() const { return randomNumberGenerator_; }
-
     void setUseComplexFresnel(bool useComplexFresnel);
 
     /**
@@ -199,7 +227,7 @@ public:
     float calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t numSamples);
 
 private:
-    std::unique_ptr<IRaytracingBackend> backend_;
+    OptixDeviceContext context_ = nullptr;
     std::shared_ptr<IGeometry> geometry_;
     std::shared_ptr<IGeometry> previousGeometry_;
 
@@ -207,7 +235,6 @@ private:
     bool sbtDirty_ = false;
     bool buffersDirty_ = false;
     bool pipelineDirty_ = false;
-    RandomNumberGenerator randomNumberGenerator_ = RandomNumberGenerator::PCG32;
 
     LengthUnit lengthUnit_ = MICRO_METER;
     std::vector<Material> materials_;
@@ -223,7 +250,12 @@ private:
     uint32_t healpixHistogramBins_ = 0;
 
     void updateHealpixBufferShape();
+    std::unique_ptr<RayTracingPipeline> rayTracingPipeline_;
+    std::unique_ptr<VolumeFractionPipeline> densityPipeline_;
 
     std::shared_ptr<RayTracingOutput> rayTracingResult_;
     std::unique_ptr<OutputBuffers> outputBuffers_;
+
+    int gpuId_ = 0;
+    int optixLoggingLevel_ = 1;
 };

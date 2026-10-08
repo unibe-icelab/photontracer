@@ -22,4 +22,3 @@ CMakeCache.txt
 CMakeSettings.json
 CMakeFiles/
 *.out
-benchmarks/results/

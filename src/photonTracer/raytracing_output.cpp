@@ -1,10 +1,13 @@
 // This source code is licensed under the BSD-3 license found in the LICENSE file in the root directory of this source tree.
 // © 2024-2026, University of Bern, Space Research and Planetary Sciences, Physics Institute, Rafael Ottersberg
 
+#include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 
+#include <OptiXToolkit/Error/cudaErrorCheck.h>
+#include <OptiXToolkit/Error/optixErrorCheck.h>
 
 #include "photontracer.h"
 #include "raytracing_output.h"

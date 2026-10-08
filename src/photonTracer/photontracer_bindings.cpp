@@ -4,11 +4,10 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
+#include <cuda_runtime.h>
 #include <limits>
-#include <optional>
 #include <vector>
 
-#include "backend_factory.h"
 #include "simulation.h"
 #include "geometries/mesh_geometry.h"
 #include "geometries/instance_geometry.h"
@@ -106,16 +105,6 @@ PYBIND11_MODULE(photontracer_bindings, m)
     py::enum_<GeometryType>(m, "GeometryType")
         .value("MESH", MESH)
         .value("MESH_INSTANCED", MESH_INSTANCED)
-        .export_values();
-
-    py::enum_<RandomNumberGenerator>(m, "RandomNumberGenerator")
-        .value("PCG32", RandomNumberGenerator::PCG32)
-        .value("MRG32K3A", RandomNumberGenerator::MRG32K3A)
-        .export_values();
-
-    py::enum_<BackendType>(m, "Backend")
-        .value("OPTIX", BackendType::OPTIX)
-        .value("EMBREE", BackendType::EMBREE)
         .export_values();
 
     py::enum_<LengthUnit>(m, "LengthUnit")
@@ -369,7 +358,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
              "Free device-side acceleration structure buffers owned by this geometry.");
 
     py::class_<MeshGeometry, IGeometry, std::shared_ptr<MeshGeometry>>(m, "MeshGeometry")
-        .def(py::init([](py::array_t<float> vertices, py::array_t<unsigned int> indices, bool compact)
+        .def(py::init([](py::array_t<float> vertices, py::array_t<unsigned int> indices)
                       {
         // Validate vertices array
         if (vertices.ndim() != 2) {
@@ -434,8 +423,8 @@ PYBIND11_MODULE(photontracer_bindings, m)
             }
         }
         
-        return std::make_shared<MeshGeometry>(std::move(vertex_vec), std::move(index_vec), compact); }),
-             py::arg("vertices"), py::arg("indices"), py::arg("compact") = true);
+        return std::make_shared<MeshGeometry>(std::move(vertex_vec), std::move(index_vec)); }),
+             py::arg("vertices"), py::arg("indices"));
 
     // For InstanceGeometry with numpy arrays
     py::class_<InstanceGeometry, IGeometry, std::shared_ptr<InstanceGeometry>>(m, "InstanceGeometry")
@@ -579,21 +568,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def_property("focus_distance", &CameraRayGenerator::getFocusDistance, &CameraRayGenerator::setFocusDistance);
 
     py::class_<Simulation, std::shared_ptr<Simulation>>(m, "Simulation")
-        .def(py::init([](int gpuId, int optixLoggingLevel, bool enableValidationMode, std::optional<BackendType> backend, uint32_t cpuThreads)
-                      {
-                          const std::vector<BackendType> available = availableBackends();
-                          if (available.empty())
-                          {
-                              throw std::runtime_error("This build of photontracer contains no raytracing backend");
-                          }
-                          BackendOptions options;
-                          options.gpuId = gpuId;
-                          options.optixLoggingLevel = optixLoggingLevel;
-                          options.enableValidationMode = enableValidationMode;
-                          options.cpuThreads = cpuThreads;
-                          return std::make_unique<Simulation>(makeBackend(backend.value_or(available.front()), options)); }),
-             py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false,
-             py::arg("backend") = py::none(), py::arg("cpu_threads") = 0)
+        .def(py::init<int, int, bool>(), py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false)
         .def("run", &Simulation::run, "Run the simulation")
         .def("free_device_memory", &Simulation::freeDeviceMemory,
              "Free device-side buffers held by the simulation (pipeline, outputs, and geometry acceleration structures).")
@@ -632,6 +607,8 @@ PYBIND11_MODULE(photontracer_bindings, m)
             }
 
             const uint3 shape = layout.shape;
+            const size_t elementCount = static_cast<size_t>(shape.x) * shape.y * shape.z;
+            const size_t totalBytes = elementCount * descriptor.elementSize;
 
             auto baseDimensions = [&]() -> std::vector<py::ssize_t>
             {
@@ -670,14 +647,16 @@ PYBIND11_MODULE(photontracer_bindings, m)
 
             auto copyFromDevice = [&](void *hostPtr)
             {
-                try
+                if (totalBytes == 0)
                 {
-                    deviceBuffers->copyToHost(type, hostPtr);
+                    return;
                 }
-                catch (const std::exception &e)
+                const cudaError_t err = cudaMemcpy(hostPtr, layout.devicePtr, totalBytes, cudaMemcpyDeviceToHost);
+                if (err != cudaSuccess)
                 {
-                    throw std::runtime_error(std::string("Failed to copy output buffer '") + descriptor.name +
-                                             "' from device memory: " + e.what());
+                    const std::string errorMsg = std::string("Failed to copy output buffer '") + descriptor.name +
+                                                 "' from device memory: " + cudaGetErrorString(err);
+                    throw std::runtime_error(errorMsg);
                 }
             };
 
@@ -744,8 +723,6 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def_property_readonly("max_sub_geometries", &Simulation::getMaxSubGeometries, "Get the maximum number of sub-geometries allowed in an InstanceGeometry.")
         .def_property_readonly("max_mesh_triangles", &Simulation::getMaxMeshTriangles, "Get the maximum number of triangles allowed in a MeshGeometry.")
         .def_property("seed", &Simulation::getInitSeed, &Simulation::setInitSeed, "Get or set the initial seed for random number generation.")
-        .def_property("random_number_generator", &Simulation::getRandomNumberGenerator, &Simulation::setRandomNumberGenerator,
-                      "Get or set the random number generator of the kernels. PCG32 is the default; MRG32K3A is the curand generator of the 1.0 releases.")
         .def_property("use_complex_fresnel", &Simulation::getUseComplexFresnel, &Simulation::setUseComplexFresnel, "Get or set whether to use complex Fresnel equations for refractive materials.")
         .def_property("direction_healpix_nside", &Simulation::getDirectionHealpixNside, &Simulation::setDirectionHealpixNside, "Set NSIDE for aggregating miss directions into Healpix bins (0 disables the histogram).")
         .def_property("ray_generator", &Simulation::getRayGenerator, &Simulation::setRayGenerator, "Get or set the ray generator for the simulation.")
@@ -773,7 +750,10 @@ PYBIND11_MODULE(photontracer_bindings, m)
                       },
                       "Get or set the list of output types for the simulation.");
 
-    m.def("is_cuda_available", &isCudaAvailable,
-          "Check if CUDA is available and properly initialized. Returns True if CUDA device(s) are detected.");
-    m.def("available_backends", &availableBackends, "The raytracing backends of this build, the default one first.");
+    // Module-level function to check CUDA availability
+    m.def("is_cuda_available", []() -> bool
+          {
+        int deviceCount = 0;
+        cudaError_t err = cudaGetDeviceCount(&deviceCount);
+        return err == cudaSuccess && deviceCount > 0; }, "Check if CUDA is available and properly initialized. Returns True if CUDA device(s) are detected.");
 }

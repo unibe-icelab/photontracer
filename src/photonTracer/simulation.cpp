@@ -4,26 +4,84 @@
 // Portions of this code were derived from NVIDIA OptiX sample code.
 // See THIRD_PARTY_NOTICES.md for full license text.
 
+#include <iomanip>
 #include <cmath>
-#include <stdexcept>
 #include <limits>
 
+#include <optix.h>
+#include <OptiXToolkit/Error/cudaErrorCheck.h>
+#include <OptiXToolkit/Error/optixErrorCheck.h>
 
 #include "simulation.h"
 #include "raytracing_output.h"
 #include "output_buffers.h"
-Simulation::Simulation(std::unique_ptr<IRaytracingBackend> backend)
-    : backend_(std::move(backend))
+
+Simulation::Simulation(int gpuId, int optixLoggingLevel, bool enableValidationMode)
 {
-    if (!backend_)
-    {
-        throw std::invalid_argument("A Simulation needs a raytracing backend");
-    }
+    initializeContext(gpuId, optixLoggingLevel, enableValidationMode);
 }
 
 Simulation::~Simulation()
 {
     freeDeviceMemory();
+
+    if (context_)
+    {
+        optixDeviceContextDestroy(context_);
+    }
+    cudaDeviceReset();
+}
+
+void Simulation::initializeContext(int gpuId, int optixLoggingLevel, bool enableValidationMode)
+{
+    gpuId_ = gpuId;
+    optixLoggingLevel_ = optixLoggingLevel;
+    // Set the CUDA device before initializing
+    int deviceCount = 0;
+    OTK_ERROR_CHECK(cudaGetDeviceCount(&deviceCount));
+
+    if (gpuId_ >= 0 && gpuId_ < deviceCount)
+    {
+        std::cout << "Selecting GPU device ID: " << gpuId_ + 1
+                  << "/" << deviceCount << std::endl;
+        OTK_ERROR_CHECK(cudaSetDevice(gpuId_));
+
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, gpuId_);
+        std::cout << "Using device: " << prop.name << std::endl;
+    }
+    else
+    {
+        std::cerr << "Warning: Invalid device ID " << gpuId_
+                  << ". Using default device." << std::endl;
+    }
+
+    // Initialize CUDA context
+    OTK_ERROR_CHECK(cudaFree(0));
+
+    // Initialize the OptiX API, loading all API entry points
+    OTK_ERROR_CHECK(optixInit());
+
+    // Specify context options
+    OptixDeviceContextOptions options = {};
+    options.logCallbackFunction = &contextLogCb;
+    options.logCallbackLevel = optixLoggingLevel_;
+
+    if (enableValidationMode)
+    {
+        options.validationMode = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
+    }
+
+    // Associate a CUDA context (current) with this OptiX context
+    CUcontext cuCtx = 0; // zero means take the current context
+    OTK_ERROR_CHECK(optixDeviceContextCreate(cuCtx, &options, &context_));
+}
+
+// Callback function signature for OptiX logging
+void Simulation::contextLogCb(uint32_t level, const char *tag, const char *message, void * /*cbdata */)
+{
+    std::cerr << "[" << std::setw(2) << level << "][" << std::setw(12) << tag << "]: "
+              << message << "\n";
 }
 
 void Simulation::setLengthUnit(LengthUnit lengthUnit)
@@ -99,10 +157,6 @@ float Simulation::getWavelengthUm() const
 
 void Simulation::setMaterials(const std::vector<Material> &materials)
 {
-    if (materials.size() > MAX_MATERIALS)
-    {
-        throw std::invalid_argument("At most " + std::to_string(MAX_MATERIALS) + " materials are supported, got " + std::to_string(materials.size()) + ".");
-    }
     materials_ = materials;
     sbtDirty_ = true;
 }
@@ -168,7 +222,13 @@ uint32_t Simulation::getMaxScatteringCount() const
 
 void Simulation::setMaxNestedGeometryLevels(uint32_t maxNestedGeometryLevels)
 {
-    const uint32_t maxTraversableGraphDepth = backend_->getMaxTraversableGraphDepth();
+    uint32_t maxTraversableGraphDepth;
+    optixDeviceContextGetProperty(
+        context_,
+        OPTIX_DEVICE_PROPERTY_LIMIT_MAX_TRAVERSABLE_GRAPH_DEPTH,
+        &maxTraversableGraphDepth,
+        sizeof(maxTraversableGraphDepth));
+
     if (maxNestedGeometryLevels < 1 || maxNestedGeometryLevels > maxTraversableGraphDepth)
     {
         throw std::runtime_error("Error: maxNestedGeometryLevels must be in the range [1, " + std::to_string(maxTraversableGraphDepth) + "]");
@@ -182,12 +242,24 @@ uint32_t Simulation::getMaxNestedGeometryLevels() const
 
 uint32_t Simulation::getMaxSubGeometries() const
 {
-    return backend_->getMaxSubGeometries();
+    uint32_t value = 0;
+    optixDeviceContextGetProperty(
+        context_,
+        OPTIX_DEVICE_PROPERTY_LIMIT_MAX_INSTANCES_PER_IAS,
+        &value,
+        sizeof(value));
+    return value;
 }
 
 uint32_t Simulation::getMaxMeshTriangles() const
 {
-    return backend_->getMaxMeshTriangles();
+    uint32_t value = 0;
+    optixDeviceContextGetProperty(
+        context_,
+        OPTIX_DEVICE_PROPERTY_LIMIT_MAX_PRIMITIVES_PER_GAS,
+        &value,
+        sizeof(value));
+    return value;
 }
 
 void Simulation::setInitSeed(uint32_t initSeed)
@@ -198,16 +270,6 @@ void Simulation::setInitSeed(uint32_t initSeed)
 uint32_t Simulation::getInitSeed() const
 {
     return initSeed_;
-}
-
-void Simulation::setRandomNumberGenerator(RandomNumberGenerator generator)
-{
-    if (!backend_->supportsRandomNumberGenerator(generator))
-    {
-        throw std::invalid_argument("The random number generator is not available in this build or backend");
-    }
-    randomNumberGenerator_ = generator;
-    pipelineDirty_ = true;
 }
 
 void Simulation::setUseComplexFresnel(bool useComplexFresnel)
@@ -261,6 +323,10 @@ void Simulation::updateHealpixBufferShape()
 
 void Simulation::initializePipeline()
 {
+    if (!context_)
+    {
+        throw std::runtime_error("OptiX context not initialized. Call initializeContext() first.");
+    }
     if (!geometry_)
     {
         throw std::runtime_error("Geometry not set. Call setGeometry() first.");
@@ -273,16 +339,20 @@ void Simulation::initializePipeline()
     {
         throw std::runtime_error("Wavelength not set. Call setWavelengthUm() first.");
     }
-    backend_->initializePipeline(materials_, wavelengthUm_, maxNestedGeometryLevels_, randomNumberGenerator_);
+    rayTracingPipeline_ = std::make_unique<RayTracingPipeline>(context_, materials_, wavelengthUm_, maxNestedGeometryLevels_);
 }
 
 void Simulation::initializePipelineDensity()
 {
+    if (!context_)
+    {
+        throw std::runtime_error("OptiX context not initialized. Call initializeContext() first.");
+    }
     if (!geometry_)
     {
         throw std::runtime_error("Geometry not set. Call setGeometry() first.");
     }
-    backend_->initializeDensityPipeline(maxNestedGeometryLevels_, randomNumberGenerator_);
+    densityPipeline_ = std::make_unique<VolumeFractionPipeline>(context_, maxNestedGeometryLevels_);
 }
 
 void Simulation::allocateOutputBuffers(const uint3 launchShape)
@@ -307,7 +377,7 @@ void Simulation::allocateOutputBuffers(const uint3 launchShape)
         updateHealpixBufferShape();
     }
     freeOutputBuffers();
-    outputBuffers_ = std::make_unique<OutputBuffers>(*backend_, launchShape, rayTracingResult_->getDescriptors());
+    outputBuffers_ = std::make_unique<OutputBuffers>(launchShape, rayTracingResult_->getDescriptors());
 }
 
 void Simulation::freeOutputBuffers()
@@ -330,11 +400,15 @@ void Simulation::freeDeviceMemory()
 
     geometry_.reset();
     previousGeometry_.reset();
-    backend_->resetPipeline();
+    rayTracingPipeline_.reset();
 }
 
 void Simulation::run()
 {
+    if (!context_)
+    {
+        throw std::runtime_error("OptiX context not initialized. Call initializeContext() first.");
+    }
     if (!geometry_)
     {
         throw std::runtime_error("Geometry not set. Call setGeometry() first.");
@@ -347,8 +421,7 @@ void Simulation::run()
     {
         throw std::runtime_error("Ray generator not set. Call setRayGenerator() first.");
     }
-    geometry_->validateMaterialIds(materials_.size());
-    if (!backend_->hasPipeline() || pipelineDirty_)
+    if (!rayTracingPipeline_ || pipelineDirty_)
     {
         initializePipeline();
         pipelineDirty_ = false;
@@ -356,7 +429,7 @@ void Simulation::run()
     }
     else if (sbtDirty_)
     {
-        backend_->updateShaderBindingTable(materials_, wavelengthUm_);
+        rayTracingPipeline_->updateShaderBindingTable(materials_, wavelengthUm_);
         sbtDirty_ = false;
     }
 
@@ -366,9 +439,9 @@ void Simulation::run()
         previousGeometry_.reset();
     }
 
-    if (geometryDirty_ || !geometry_->isBuiltBy(backend_.get()))
+    if (geometryDirty_)
     {
-        backend_->buildGeometry(*geometry_);
+        geometry_->build(context_);
         geometryDirty_ = false;
     }
 
@@ -401,6 +474,7 @@ void Simulation::run()
     params.initSeed = initSeed_;
     params.geometryType = geometry_->getType();
     params.lengthScale = computeLengthScaleFactor();
+    params.handle = geometry_->getTraversableHandle();
     params.rayGeneratorType = rayGenType;
     params.rayGeneratorData = generatorData;
     params.deviceOutputBuffers = outputBuffers_->getDeviceOutputBuffers();
@@ -410,16 +484,20 @@ void Simulation::run()
     params.useComplexFresnel = useComplexFresnel_;
 
     // Launch the ray tracing pipeline
-    backend_->launch(params, *geometry_, launchShape);
+    rayTracingPipeline_->launch(params, launchShape);
 }
 
 float Simulation::calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t numSamples)
 {
+    if (!context_)
+    {
+        throw std::runtime_error("OptiX context not initialized. Call initializeContext() first.");
+    }
     if (!geometry_)
     {
         throw std::runtime_error("Geometry not set. Call setGeometry() first.");
     }
-    if (!backend_->hasDensityPipeline())
+    if (!densityPipeline_)
     {
         initializePipelineDensity();
         pipelineDirty_ = false;
@@ -429,30 +507,30 @@ float Simulation::calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t
         previousGeometry_->freeDeviceMemory();
         previousGeometry_.reset();
     }
-    if (geometryDirty_ || !geometry_->isBuiltBy(backend_.get()))
+    if (geometryDirty_)
     {
-        backend_->buildGeometry(*geometry_);
+        geometry_->build(context_);
         geometryDirty_ = false;
     }
 
-    // Buffer the launch counts the surfaces each sample ray crosses in
-    auto freeBuffer = [this](int32_t *buffer) { backend_->freeBuffer(buffer); };
-    std::unique_ptr<int32_t, decltype(freeBuffer)> intersectionCounts(
-        static_cast<int32_t *>(backend_->allocateBuffer(sizeof(int32_t) * numSamples)), freeBuffer);
+    // allocate device buffer for counting intersections
+    int32_t *dIntersectionCountBuffer = nullptr;
+    OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dIntersectionCountBuffer), sizeof(int32_t) * numSamples)); // Assuming max 1024 bins
 
     InputParametersSampleDensity params;
     params.initSeed = initSeed_;
     params.numberOfRays = numSamples;
     params.boxMin = boxMin;
     params.boxMax = boxMax;
-    params.intersectionCountBuffer = intersectionCounts.get();
+    params.handle = geometry_->getTraversableHandle();
+    params.intersectionCountBuffer = dIntersectionCountBuffer;
 
     // Launch the ray tracing pipeline
-    backend_->launchDensity(params, *geometry_);
+    densityPipeline_->launch(params);
 
     // Copy the intersection count back to host
     std::vector<int32_t> hIntersectionCounts(numSamples);
-    backend_->copyBufferToHost(hIntersectionCounts.data(), intersectionCounts.get(), sizeof(int32_t) * numSamples);
+    OTK_ERROR_CHECK(cudaMemcpy(hIntersectionCounts.data(), dIntersectionCountBuffer, sizeof(int32_t) * numSamples, cudaMemcpyDeviceToHost));
 
     uint32_t countInside = 0;
     for (int32_t &count : hIntersectionCounts)
@@ -465,7 +543,9 @@ float Simulation::calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t
 
     float volumeFraction = static_cast<float>(countInside) / static_cast<float>(numSamples);
 
-    backend_->resetDensityPipeline();
+    // Free device buffer
+    OTK_ERROR_CHECK(cudaFree(dIntersectionCountBuffer));
+    densityPipeline_.reset();
 
     return volumeFraction;
 }

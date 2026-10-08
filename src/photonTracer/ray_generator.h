@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "portable_math.h"
+#include <OptiXToolkit/ShaderUtil/vec_math.h>
 #include <cmath>
 #include <stdexcept>
 

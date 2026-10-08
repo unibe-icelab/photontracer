@@ -92,13 +92,6 @@ __all__ = [
     "CameraRayGenerator",
     "Simulation",
     "is_cuda_available",
-    "available_backends",
-    "Backend",
-    "OPTIX",
-    "EMBREE",
-    "RandomNumberGenerator",
-    "PCG32",
-    "MRG32K3A",
 ]
 
 
@@ -226,71 +219,6 @@ class MaterialType:
     def value(self) -> int: ...
 
 
-class Backend:
-    """Enum selecting where a :class:`Simulation` traces its rays.
-
-    Pass one of these as ``backend`` to :class:`Simulation`.
-
-    Members:
-
-    * ``OPTIX`` – NVIDIA GPU with OptiX.
-    * ``EMBREE`` – CPU with Embree and TBB. Supports only the ``PCG32``
-      generator so far, and not the ``LOGS``, ``LOG_OFFSETS`` and
-      ``DIRECTION_HISTOGRAM_HEALPIX`` outputs.
-    """
-
-    OPTIX: Backend
-    EMBREE: Backend
-    __members__: dict[str, Backend]
-
-    def __eq__(self, other: typing.Any) -> bool: ...
-
-    def __hash__(self) -> int: ...
-
-    def __init__(self, value: int) -> None: ...
-
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def value(self) -> int: ...
-
-
-class RandomNumberGenerator:
-    """Enum selecting the random number generator of the ray tracing kernels.
-
-    Assign one of these values to :attr:`Simulation.random_number_generator`.
-    Both give the same results statistically, but not ray by ray.
-
-    Members:
-
-    * ``PCG32`` – PCG32, the default. Cheap to seed, which matters most for
-      scenes with little physics per ray.
-    * ``MRG32K3A`` – curand's MRG32k3a, the generator of the 1.0 releases.
-      Use it to reproduce results of those releases ray by ray (CUDA only).
-    """
-
-    PCG32: RandomNumberGenerator
-    MRG32K3A: RandomNumberGenerator
-    __members__: dict[str, RandomNumberGenerator]
-
-    def __eq__(self, other: typing.Any) -> bool: ...
-
-    def __hash__(self) -> int: ...
-
-    def __init__(self, value: int) -> None: ...
-
-    def __int__(self) -> int: ...
-
-    def __repr__(self) -> str: ...
-
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def value(self) -> int: ...
-
-
 class OutputType:
     """Enum selecting which per-ray quantity to store in an output buffer.
 
@@ -400,8 +328,6 @@ class MeshGeometry(IGeometry):
             array of length ``3*T``, any integer dtype (cast to ``uint32``
             internally).  Each row/triple gives the three vertex indices of
             one triangle.
-        compact: Compact the acceleration structure after building to save
-            device memory (default ``True``).
 
     Example::
 
@@ -414,7 +340,7 @@ class MeshGeometry(IGeometry):
     """
 
     def __init__(self, vertices: NDArray[numpy.floating],
-                 indices: NDArray[numpy.integer], compact: bool = ...) -> None: ...
+                 indices: NDArray[numpy.integer]) -> None: ...
 
 
 class InstanceGeometry(IGeometry):
@@ -989,24 +915,19 @@ class CameraRayGenerator(IRayGenerator):
 
 
 class Simulation:
-    """Main entry point for ray tracing simulations.
+    """Main entry point for GPU ray tracing simulations.
 
-    A ``Simulation`` wraps a ray tracing backend and manages the full
-    pipeline: geometry acceleration structures, ray generation, launch, and
-    output buffer retrieval.
+    A ``Simulation`` wraps an NVIDIA OptiX device context and manages the full
+    rendering pipeline: geometry acceleration structures, ray generation, CUDA
+    kernel launch, and output buffer retrieval.
 
     Args:
         gpu_id: Zero-based index of the CUDA device to use (default ``0``).
-            OptiX only.
         optix_logging_level: Verbosity of OptiX internal messages, ``0``
-            (silent) to ``4`` (verbose).  Default ``1``.  OptiX only.
+            (silent) to ``4`` (verbose).  Default ``1``.
         enable_validation_mode: Enable OptiX validation mode for additional
             runtime checks during development.  Significantly slower; leave
-            ``False`` in production.  OptiX only.
-        backend: :class:`Backend` to trace with. By default the first of
-            :func:`available_backends`, which is OptiX if the build has it.
-        cpu_threads: Number of threads of the Embree backend; ``0`` (default)
-            uses all cores.
+            ``False`` in production.
 
     Typical usage::
 
@@ -1028,8 +949,6 @@ class Simulation:
         gpu_id: int = 0,
         optix_logging_level: int = 1,
         enable_validation_mode: bool = False,
-        backend: typing.Optional[Backend] = None,
-        cpu_threads: int = 0,
     ) -> None: ...
 
     def run(self) -> None:
@@ -1238,27 +1157,12 @@ class Simulation:
         """Initial seed for the on-device random number generator.
 
         Changing the seed produces statistically independent simulation runs
-        for variance estimation.  The same seed gives the same rays when run
-        again with the same build and :attr:`random_number_generator`.
-        Default ``0``.
+        for variance estimation.  Default ``0``.
         """
         ...
 
     @seed.setter
     def seed(self, value: int) -> None: ...
-
-    @property
-    def random_number_generator(self) -> RandomNumberGenerator:
-        """Random number generator of the ray tracing kernels.
-
-        ``PCG32`` (default) or ``MRG32K3A``, the curand generator of the 1.0
-        releases. Changing it rebuilds the ray tracing pipeline on the next
-        :meth:`run`.
-        """
-        ...
-
-    @random_number_generator.setter
-    def random_number_generator(self, value: RandomNumberGenerator) -> None: ...
 
     @property
     def use_complex_fresnel(self) -> bool:
@@ -1325,11 +1229,6 @@ class Simulation:
     def outputs(self, value: typing.Sequence[OutputType]) -> None: ...
 
 
-def available_backends() -> list[Backend]:
-    """Return the backends this build contains, the default one first."""
-    ...
-
-
 def is_cuda_available() -> bool:
     """Return ``True`` if at least one CUDA-capable GPU is detected.
 
@@ -1348,12 +1247,6 @@ DIFFUSE: MaterialType
 REFRACTIVE: MaterialType
 REFLECTIVE: MaterialType
 VOLUME_SCATTERING: MaterialType
-
-OPTIX: Backend
-EMBREE: Backend
-
-PCG32: RandomNumberGenerator
-MRG32K3A: RandomNumberGenerator
 
 MESH: GeometryType
 MESH_INSTANCED: GeometryType
