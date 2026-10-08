@@ -566,6 +566,22 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def_property("source_radius", &IsotropicRayGenerator::getSourceRadius, &IsotropicRayGenerator::setSourceRadius)
         .def_property("offset_radius", &IsotropicRayGenerator::getOffsetRadius, &IsotropicRayGenerator::setOffsetRadius);
 
+    py::class_<DiffuseRayGenerator, IRayGenerator, std::shared_ptr<DiffuseRayGenerator>>(m, "DiffuseRayGenerator")
+        .def(py::init([](int number_of_rays, py::object origin, py::object direction, float offset_radius)
+                      { return DiffuseRayGenerator(
+                            number_of_rays,
+                            toFloat3(origin, "origin"),
+                            toFloat3(direction, "direction"),
+                            offset_radius); }),
+             py::arg("number_of_rays"), py::arg("origin"), py::arg("direction"), py::arg("offset_radius"))
+        .def_property("origin", [](const DiffuseRayGenerator &self)
+                      { return toPyObject(self.getOrigin()); }, [](DiffuseRayGenerator &self, py::object origin)
+                      { self.setOrigin(toFloat3(origin, "origin")); })
+        .def_property("direction", [](const DiffuseRayGenerator &self)
+                      { return toPyObject(self.getDirection()); }, [](DiffuseRayGenerator &self, py::object direction)
+                      { self.setDirection(toFloat3(direction, "direction")); })
+        .def_property("offset_radius", &DiffuseRayGenerator::getOffsetRadius, &DiffuseRayGenerator::setOffsetRadius);
+
     py::class_<CameraRayGenerator, IRayGenerator, std::shared_ptr<CameraRayGenerator>>(m, "CameraRayGenerator")
         .def(py::init<>())
         .def_property("image_width", &CameraRayGenerator::getImageWidth, &CameraRayGenerator::setImageWidth)

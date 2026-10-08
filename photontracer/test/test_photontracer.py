@@ -2,7 +2,7 @@ import numpy as np
 import trimesh
 import pytest
 import photontracer
-from photontracer import available_backends, Backend, TraceEvent, LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, OutputType, RandomNumberGenerator
+from photontracer import available_backends, Backend, TraceEvent, LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, DiffuseRayGenerator, OutputType, RandomNumberGenerator
 
 def test_reflection_angle(backend):
     sim = Simulation(backend=backend)
@@ -232,6 +232,29 @@ def test_isotropic_source_is_uniform_on_the_sphere(backend, generator):
     assert np.allclose(np.linalg.norm(directions, axis=1), 1.0, atol=1e-5)
     assert (np.abs(directions.mean(axis=0)) < 5 / np.sqrt(3 * n)).all()  # each component has variance 1/3
     assert np.allclose((directions ** 2).mean(axis=0), 1 / 3, atol=5 * np.sqrt(4 / 45 / n))
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_diffuse_source_is_cosine_weighted_in_the_hemisphere(backend, generator):
+    n = 200000
+    sim = Simulation(backend=backend)
+    sphere = trimesh.creation.icosphere(subdivisions=1, radius=1.0)
+    sim.geometry = MeshGeometry(sphere.vertices, sphere.faces)
+    sim.wavelength_um = 1.0
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.3 + 0j)]
+    _set_generator(sim, generator)
+    sim.ray_generator = DiffuseRayGenerator(number_of_rays=n, origin=(0, 0, 10), direction=(0, 0, -1), offset_radius=2)
+    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.SOURCE_POSITION]
+    sim.run()
+    directions = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
+    positions = sim.get_output_buffer(OutputType.SOURCE_POSITION)
+
+    assert np.allclose(np.linalg.norm(directions, axis=1), 1.0, atol=1e-5)
+    cosine = -directions[:, 2]
+    assert (cosine >= -1e-5).all()
+    assert abs(cosine.mean() - 2 / 3) < 5 * np.sqrt(1 / 18 / n)
+    assert np.allclose(positions[:, 2], 10)
+    assert (np.hypot(positions[:, 0], positions[:, 1]) <= 2 + 1e-5).all()
 
 
 @pytest.mark.parametrize("generator", GENERATORS)

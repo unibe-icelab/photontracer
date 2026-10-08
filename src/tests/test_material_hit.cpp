@@ -228,6 +228,7 @@ TEST(MaterialHit, DiffuseScatters)
     EXPECT_FALSE(scene.ray.state.done);
     expectNear(scene.ray.origin, scene.hit.front);
     expectNear(scene.ray.direction, calculateLamberianDirection(0.25f, 0.75f, make_float3(0, 0, 1)));
+    EXPECT_NEAR(scene.ray.direction.z, 0.5f, 1e-5);
     EXPECT_FLOAT_EQ(scene.ray.stokesVector.y, 0.0f); // depolarized
 }
 

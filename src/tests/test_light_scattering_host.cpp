@@ -135,14 +135,21 @@ TEST(LightScattering, ScatteringPlaneAxes)
 TEST(LightScattering, LambertianDirection)
 {
     const float3 normal = make_float3(0, 1, 0);
-    const float theta = 2.0f * kPi * 0.25f;
-    const float phi = std::acos(2.0f * 0.75f - 1.0f);
-    const float3 expected = otk::normalize(normal + make_float3(std::sin(phi) * std::cos(theta), std::sin(phi) * std::sin(theta), std::cos(phi)));
+    // u1 sets the polar angle (cos^2 theta = u1), u2 the azimuth around the normal
+    for (const float3 n : {normal, otk::normalize(make_float3(1, -2, 3)), make_float3(0, 0, -1), make_float3(0, 0, 1)})
+    {
+        const float3 direction = calculateLamberianDirection(0.25f, 0.75f, n);
+        EXPECT_NEAR(otk::length(direction), 1.0f, 1e-5);
+        EXPECT_NEAR(otk::dot(direction, n), 0.5f, 1e-5); // sqrt(0.25)
+    }
 
-    const float3 direction = calculateLamberianDirection(0.25f, 0.75f, normal);
-    expectNear(direction, expected, 1e-5);
-    EXPECT_NEAR(otk::length(direction), 1.0f, 1e-5);
-    EXPECT_GT(otk::dot(direction, normal), 0.0f);
+    // u1 = 1 is along the normal
+    expectNear(calculateLamberianDirection(1.0f, 0.3f, normal), normal, 1e-5);
+
+    // The azimuth turns the direction around the normal: u2 = 0.25 and 0.75 are opposite
+    const float3 a = calculateLamberianDirection(0.25f, 0.25f, normal);
+    const float3 b = calculateLamberianDirection(0.25f, 0.75f, normal);
+    expectNear(a + b, 2.0f * 0.5f * normal, 1e-5);
 }
 
 TEST(LightScattering, ReflectivitySchlick)

@@ -52,6 +52,7 @@ try:
         IRayGenerator,
         ParallelRayGenerator,
         IsotropicRayGenerator,
+        DiffuseRayGenerator,
         CameraRayGenerator,
     )
 except ImportError as e:
@@ -112,6 +113,7 @@ __all__ = [
     'IRayGenerator',
     'ParallelRayGenerator',
     'IsotropicRayGenerator',
+    'DiffuseRayGenerator',
     'CameraRayGenerator',
 ]
 

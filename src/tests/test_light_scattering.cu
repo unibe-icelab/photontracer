@@ -462,19 +462,9 @@ TEST(LightScattering, LambertianDirection)
     float3 direction;
     cudaMemcpy(&direction, d_direction, sizeof(float3), cudaMemcpyDeviceToHost);
 
-    const float theta = 2.0f * static_cast<float>(M_PI) * randomNumber1;
-    const float phi = acosf(2.0f * randomNumber2 - 1.0f);
-    const float x = sinf(phi) * cosf(theta);
-    const float y = sinf(phi) * sinf(theta);
-    const float z = cosf(phi);
-    const float3 expected = otk::normalize(normal + make_float3(x, y, z));
-
-    EXPECT_NEAR(direction.x, expected.x, 1e-5);
-    EXPECT_NEAR(direction.y, expected.y, 1e-5);
-    EXPECT_NEAR(direction.z, expected.z, 1e-5);
-
+    // cos(theta) = sqrt(randomNumber1) to the normal
+    EXPECT_NEAR(otk::dot(direction, normal), std::sqrt(randomNumber1), 1e-5);
     EXPECT_NEAR(otk::length(direction), 1.0f, 1e-5);
-    EXPECT_GT(otk::dot(direction, normal), 0.0f);
 
     cudaFree(d_direction);
 }

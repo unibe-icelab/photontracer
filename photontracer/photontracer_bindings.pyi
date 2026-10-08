@@ -87,6 +87,7 @@ __all__ = [
     "IRayGenerator",
     "ParallelRayGenerator",
     "IsotropicRayGenerator",
+    "DiffuseRayGenerator",
     "CameraRayGenerator",
     "Simulation",
     "is_cuda_available",
@@ -779,6 +780,7 @@ class IRayGenerator:
 
     * :class:`ParallelRayGenerator` – collimated beam (plane wave).
     * :class:`IsotropicRayGenerator` – rays emmitted uniformly from all directions outside of a sphere towards the scene.
+    * :class:`DiffuseRayGenerator` – diffuse illumination of a surface: cosine-weighted directions around an axis.
     * :class:`CameraRayGenerator` – pinhole camera model for rendering.
 
     Assign a concrete instance to :attr:`Simulation.ray_generator` before
@@ -902,6 +904,67 @@ class IsotropicRayGenerator(IRayGenerator):
     @property
     def offset_radius(self) -> float:
         """Tangential offset radius in geometry units."""
+        ...
+
+    @offset_radius.setter
+    def offset_radius(self, value: float) -> None: ...
+
+
+class DiffuseRayGenerator(IRayGenerator):
+    """A diffuse (Lambertian) source illuminating a surface from one hemisphere.
+
+    Ray origins are uniformly distributed on a disk of radius ``offset_radius``
+    centred at ``origin`` and perpendicular to ``direction``.  Ray directions are
+    cosine-weighted around ``direction``, i.e. the density is proportional to the
+    cosine of the angle to ``direction``, which is the flux of an isotropic
+    radiance field onto a surface normal to ``direction``.  All rays point into
+    the hemisphere around ``direction``.
+
+    Args:
+        number_of_rays: Total number of rays to launch.
+        origin: Centre of the source disk (:data:`Vector3`).
+        direction: Mean propagation direction (:data:`Vector3`), e.g.
+            ``[0, 0, -1]`` for light falling down onto a surface in the
+            xy-plane; normalised automatically.
+        offset_radius: Radius of the circular source disk in geometry units.
+
+    Example::
+
+        gen = DiffuseRayGenerator(
+            number_of_rays=1_000_000,
+            origin=[0, 0, 100],
+            direction=[0, 0, -1],
+            offset_radius=50.0,
+        )
+    """
+
+    def __init__(
+        self,
+        number_of_rays: int,
+        origin: Vector3,
+        direction: Vector3,
+        offset_radius: float,
+    ) -> None: ...
+
+    @property
+    def origin(self) -> Vector3:
+        """Centre of the source disk."""
+        ...
+
+    @origin.setter
+    def origin(self, value: Vector3) -> None: ...
+
+    @property
+    def direction(self) -> Vector3:
+        """Unit axis of the hemisphere the rays are emitted into."""
+        ...
+
+    @direction.setter
+    def direction(self, value: Vector3) -> None: ...
+
+    @property
+    def offset_radius(self) -> float:
+        """Radius of the circular source disk in geometry units."""
         ...
 
     @offset_radius.setter
@@ -1354,7 +1417,7 @@ class Simulation:
         """The ray generator that defines source rays.
 
         Assign a :class:`ParallelRayGenerator`, :class:`IsotropicRayGenerator`,
-        or :class:`CameraRayGenerator` before calling :meth:`run`.
+        :class:`DiffuseRayGenerator`, or :class:`CameraRayGenerator` before calling :meth:`run`.
         """
         ...
 

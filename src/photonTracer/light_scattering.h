@@ -210,7 +210,7 @@ PT_INLINE PT_HD void calculateSnellsLaw(
 
 /**
  * @brief Calculate a random lambertian direction based on two random numbers and a normal,
- * by sampling uniformly over the unit sphere and adding it to the normal vector
+ * by sampling the cosine-weighted hemisphere around the normal
  *
  * @param[in] randomNumber1 A random number between 0 and 1
  * @param[in] randomNumber2 A random number between 0 and 1
@@ -221,15 +221,7 @@ PT_INLINE PT_HD void calculateSnellsLaw(
 PT_INLINE PT_HD float3 calculateLamberianDirection(
     float randomNumber1, float randomNumber2, const float3 &normal)
 {
-    float theta = 2.0f * M_PIf * randomNumber1;     // Azimuthal angle
-    float phi = acosf(2.0f * randomNumber2 - 1.0f); // Polar angle
-
-    float x = sinf(phi) * cosf(theta);
-    float y = sinf(phi) * sinf(theta);
-    float z = cosf(phi);
-
-    float3 direction = normal + make_float3(x, y, z);
-    return otk::normalize(direction);
+    return cosineWeightedDirection(randomNumber1, randomNumber2, normal);
 }
 
 /**

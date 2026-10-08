@@ -26,6 +26,8 @@ All notable changes to this project will be documented in this file.
 - Declare `numpy` as a dependency of the package, and require Python 3.9 or newer. The CPU CI job tests Python 3.9 and 3.13
 - Add the CMake option `PHOTONTRACER_USE_FASTMATH` (default on). Off compiles the CUDA kernels without `--use_fast_math` and the Embree physics without `-ffast-math`. With it on, the physics of the Embree backend is now compiled with `-ffast-math -fno-finite-math-only` (NaN encodes the random polarization, so finite-math-only has to stay off)
 - Compact mesh acceleration structures after building, controlled by the new `compact` argument of `MeshGeometry` (default on)
+- Add `DiffuseRayGenerator`, a disk source emitting cosine-weighted directions around an axis to model diffuse illumination of a surface
+- Sample the directions of `DIFFUSE` surfaces with Malley's method (a lifted uniform disk point) instead of a random unit vector added to the normal: same distribution, but no `acosf` and extra trigonometry, and no `normalize` that can divide by zero. Results agree statistically with earlier builds but not ray by ray
 
 ## 1.0.2 - 18-03-2026
 
