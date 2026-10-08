@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "backend_factory.h"
+#include "log.h"
 #include "simulation.h"
 #include "geometries/mesh_geometry.h"
 #include "geometries/instance_geometry.h"
@@ -809,5 +810,8 @@ PYBIND11_MODULE(photontracer_bindings, m)
 
     m.def("is_cuda_available", &isCudaAvailable,
           "Check if CUDA is available and properly initialized. Returns True if CUDA device(s) are detected.");
+    m.def("set_verbose", [](bool verbose) { verboseOutput() = verbose; },
+          py::arg("verbose"), "Print progress messages (device in use, compile and launch times). Off by default.");
+    m.def("is_verbose", []() { return verboseOutput().load(); }, "Whether progress messages are printed.");
     m.def("available_backends", &availableBackends, "The raytracing backends of this build, the default one first.");
 }

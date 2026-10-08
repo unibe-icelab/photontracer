@@ -6,6 +6,8 @@ try:
     from .photontracer_bindings import (
         is_cuda_available,
         available_backends,
+        set_verbose,
+        is_verbose,
         Backend,
         TraceEvent,
         OPTIX,
@@ -64,6 +66,8 @@ except ImportError as e:
 __all__ = [
     'is_cuda_available',
     'available_backends',
+    'set_verbose',
+    'is_verbose',
     'Backend',
     'TraceEvent',
     'OPTIX',
@@ -111,15 +115,16 @@ __all__ = [
     'CameraRayGenerator',
 ]
 
-# Patch Simulation.run() to flush stdout before running the simulation
-# This ensures that jupyter notebooks display that the simulation is running
+# With verbose output, flush stdout before running the simulation so that
+# jupyter notebooks display that the simulation is running
 _original_run = Simulation.run
 
 
 def _patched_run(self, *args, **kwargs):
-    import sys
-    print("Starting simulation")
-    sys.stdout.flush()
+    if is_verbose():
+        import sys
+        print("Starting simulation")
+        sys.stdout.flush()
     return _original_run(self, *args, **kwargs)
 
 

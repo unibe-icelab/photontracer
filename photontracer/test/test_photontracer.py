@@ -1,6 +1,7 @@
 import numpy as np
 import trimesh
 import pytest
+import photontracer
 from photontracer import available_backends, Backend, TraceEvent, LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, OutputType, RandomNumberGenerator
 
 def test_reflection_angle(backend):
@@ -518,10 +519,8 @@ def test_layered_absorption(backend):
     a_2s = []
     a_3s = []
     a_4s = []
-    import random
-
-    for _ in range(10):
-        sim.seed = random.randint(0, 2**31 - 1)
+    for run in range(10):
+        sim.seed = 1000 + run
         sim.run()
 
         scattering_angles = sim.get_output_buffer(OutputType.SCATTERING_ANGLE)
@@ -891,3 +890,24 @@ def test_traces_agree_between_backends():
         assert len(a) >= n and len(b) >= n
         for field in ("origin_in", "direction_in", "origin_out", "direction_out", "stokes"):
             assert np.allclose(a[field][:n], b[field][:n], atol=1e-3), field
+
+
+@pytest.fixture
+def restore_verbosity():
+    was_verbose = photontracer.is_verbose()
+    yield
+    photontracer.set_verbose(was_verbose)
+
+
+def test_the_library_is_quiet_unless_verbose(backend, capfd, restore_verbosity):
+    assert not photontracer.is_verbose()
+    capfd.readouterr()
+    sim = _box_simulation(backend, _materials(2))
+    sim.run()
+    captured = capfd.readouterr()
+    assert captured.out == ""
+
+    photontracer.set_verbose(True)
+    sim = _box_simulation(backend, _materials(2))
+    sim.run()
+    assert "Starting simulation" in capfd.readouterr().out

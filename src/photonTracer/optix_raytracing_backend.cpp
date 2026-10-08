@@ -10,6 +10,7 @@
 #include <OptiXToolkit/Error/cudaErrorCheck.h>
 #include <OptiXToolkit/Error/optixErrorCheck.h>
 
+#include "log.h"
 #include "optix_geometry_build.h"
 #include "optix_raytracing_backend.h"
 
@@ -20,13 +21,12 @@ OptixRaytracingBackend::OptixRaytracingBackend(int gpuId, int optixLoggingLevel,
 
     if (gpuId >= 0 && gpuId < deviceCount)
     {
-        std::cout << "Selecting GPU device ID: " << gpuId + 1
-                  << "/" << deviceCount << std::endl;
+        logInfo("Selecting GPU device ID: ", gpuId + 1, "/", deviceCount);
         OTK_ERROR_CHECK(cudaSetDevice(gpuId));
 
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, gpuId);
-        std::cout << "Using device: " << prop.name << std::endl;
+        logInfo("Using device: ", prop.name);
     }
     else
     {

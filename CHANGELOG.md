@@ -22,6 +22,8 @@ All notable changes to this project will be documented in this file.
 - Add an Embree backend that runs the simulation on the CPU with TBB, selected with the `backend` argument of `Simulation`. The new CMake option `PHOTONTRACER_BUILD_EMBREE` (default on) builds it, and `PHOTONTRACER_BUILD_OPTIX=OFF` builds the Python module without CUDA. `available_backends()` lists the backends of a build. It supports instances, nested up to `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` levels (default 4). It writes the `DIRECTION_HISTOGRAM_HEALPIX` output as well; only the `PCG32` generator is supported The AVX512 kernels of Embree are not built, to keep the build time down
 - Add `Simulation.trace_rays`, `max_trace_steps` and `get_trace()` to record the steps (positions, directions, media, Stokes vector, event) of up to 256 chosen rays on both backends. Untraced launches run a kernel without the recording code
 - Remove the `LOGS` and `LOG_OFFSETS` outputs and the CMake option `ENABLE_DEBUG_PRINT_KERNEL`. They needed 1 MiB per ray, only worked in a special debug build and were not documented; the ray trace replaces them
+- Print progress messages (device in use, compile and launch times) only after `photontracer.set_verbose(True)`; before, they were always printed
+- Declare `numpy` as a dependency of the package, and require Python 3.9 or newer. The CPU CI job tests Python 3.9 and 3.13
 - Compact mesh acceleration structures after building, controlled by the new `compact` argument of `MeshGeometry` (default on)
 
 ## 1.0.2 - 18-03-2026
