@@ -89,6 +89,15 @@ endif()
 if(PHOTONTRACER_BUILD_EMBREE)
   find_package(TBB 2021 CONFIG REQUIRED)
 
+  # CMake drops the include directory of TBB::tbb for the targets of Embree when it is also an
+  # implicit include directory of the compiler, as in a conda environment. Pass it as a plain flag.
+  get_target_property(PHOTONTRACER_TBB_INCLUDE_DIRS TBB::tbb INTERFACE_INCLUDE_DIRECTORIES)
+  if(PHOTONTRACER_TBB_INCLUDE_DIRS)
+    foreach(DIR IN LISTS PHOTONTRACER_TBB_INCLUDE_DIRS)
+      add_compile_options("-I${DIR}")
+    endforeach()
+  endif()
+
   # Only triangles and instances are traced; leaving the rest out keeps the build short
   set(EMBREE_STATIC_LIB ON CACHE BOOL "")
   set(EMBREE_TUTORIALS OFF CACHE BOOL "")
