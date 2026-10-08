@@ -3,6 +3,7 @@ include(GNUInstallDirs)
 # Settings, output buffers, geometry data and ray generators; plain C++ without any backend
 add_library(PhotonTracerCore STATIC
   simulation.cpp
+  trace_buffers.cpp
   output_buffers.cpp
   raytracing_output.cpp
   geometries/instance_geometry.cpp

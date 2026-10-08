@@ -18,7 +18,6 @@ struct BufferDescriptor
         Float4,
         Int32,
         UInt32,
-        String,
     };
     OutputType type;
     std::string name;

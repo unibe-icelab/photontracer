@@ -134,3 +134,85 @@ PT_INLINE PT_HD void writeMainTraceOutputs(
         out.scatteringAngle[idx] = acosf(cosTheta);
     }
 }
+
+/// Slot of a ray in the trace buffers, or -1 if it is not traced
+PT_INLINE PT_HD int findTraceSlot(const TraceParams &trace, uint32_t ray)
+{
+    int low = 0;
+    int high = static_cast<int>(trace.rayCount) - 1;
+    while (low <= high)
+    {
+        const int middle = (low + high) / 2;
+        if (trace.rays[middle] == ray)
+        {
+            return middle;
+        }
+        if (trace.rays[middle] < ray)
+        {
+            low = middle + 1;
+        }
+        else
+        {
+            high = middle - 1;
+        }
+    }
+    return -1;
+}
+
+/// What a step did to the ray, from its state afterwards
+PT_INLINE PT_HD uint32_t traceEventOf(const RayState &state)
+{
+    if (state.absorbed == 1)
+    {
+        return TRACE_ABSORBED;
+    }
+    if (state.absorbed == 3)
+    {
+        return TRACE_ERROR;
+    }
+    return state.done ? TRACE_ESCAPED : TRACE_INTERACTION;
+}
+
+/// Writes the start of a step of a traced ray, before the ray is traced; steps beyond `maxSteps` are
+/// only counted.
+PT_INLINE PT_HD void recordTraceStart(const TraceParams &trace, int slot, uint32_t ray, uint32_t step, const RayData &before)
+{
+    trace.stepCounts[slot] = step + 1;
+    if (step >= trace.maxSteps)
+    {
+        return;
+    }
+    TraceRecord &record = trace.records[static_cast<size_t>(slot) * trace.maxSteps + step];
+    record.ray = ray;
+    record.step = step;
+    record.mediumIn = before.state.currentMedium;
+    record.originIn[0] = before.origin.x;
+    record.originIn[1] = before.origin.y;
+    record.originIn[2] = before.origin.z;
+    record.directionIn[0] = before.direction.x;
+    record.directionIn[1] = before.direction.y;
+    record.directionIn[2] = before.direction.z;
+}
+
+/// Completes the step started by recordTraceStart() with the ray after it
+PT_INLINE PT_HD void recordTraceEnd(const TraceParams &trace, int slot, uint32_t step, const RayData &after, uint32_t event)
+{
+    if (step >= trace.maxSteps)
+    {
+        return;
+    }
+    TraceRecord &record = trace.records[static_cast<size_t>(slot) * trace.maxSteps + step];
+    record.event = event;
+    record.mediumOut = after.state.currentMedium;
+    record.originOut[0] = after.origin.x;
+    record.originOut[1] = after.origin.y;
+    record.originOut[2] = after.origin.z;
+    record.directionOut[0] = after.direction.x;
+    record.directionOut[1] = after.direction.y;
+    record.directionOut[2] = after.direction.z;
+    record.stokes[0] = after.stokesVector.x;
+    record.stokes[1] = after.stokesVector.y;
+    record.stokes[2] = after.stokesVector.z;
+    record.stokes[3] = after.stokesVector.w;
+    record.opticalPathLength = static_cast<float>(after.opticalPathLength);
+}

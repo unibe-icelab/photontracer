@@ -47,6 +47,7 @@ struct InputParameters
     uint32_t outputFlags;
     uint32_t healpixNside;
     uint32_t healpixBinCount;
+    TraceParams trace;
 };
 
 struct InputParametersSampleDensity

@@ -87,7 +87,7 @@ pip install . -C cmake.define.PHOTONTRACER_BUILD_OPTIX=OFF
 sim = photontracer.Simulation(backend=photontracer.Backend.EMBREE, cpu_threads=8)
 ```
 
-`cpu_threads=0` (the default) uses all cores. The Embree backend supports only the PCG32 generator so far, and not yet the outputs `LOGS` and `LOG_OFFSETS`. Instances can be nested up to the CMake setting `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` (default 4); `Simulation.max_nested_geometry_levels` is limited to that plus one.
+`cpu_threads=0` (the default) uses all cores. The Embree backend supports only the PCG32 generator. Instances can be nested up to the CMake setting `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` (default 4); `Simulation.max_nested_geometry_levels` is limited to that plus one.
 
 ### Random number generator
 
@@ -105,6 +105,20 @@ a run with the same generator (and the same build).
 ## Usage
 
 Refer to the example jupyter notebooks in `examples/` and the docstrings of the Python objects.
+
+### Tracing single rays
+
+To see what happens to individual rays, list their indices (the position of the ray in the output buffers) and read the steps after the run:
+
+```python
+sim.trace_rays = [12, 40517]   # at most 256 rays
+sim.max_trace_steps = 1000     # steps stored per ray; later ones are only counted
+sim.run()
+steps = sim.get_trace()        # structured numpy array, ordered by ray and step
+steps[["ray", "step", "event", "origin_in", "direction_out"]]
+```
+
+A step goes from the start of the ray, or the last interaction, to the next one. It holds the ray before and after (position, direction, medium), the Stokes vector, the optical path length and a `TraceEvent` (interaction, escaped, absorbed, ...). Seeds are deterministic, so a ray that stands out in a normal run, for example one with a very high `SCATTERING_COUNT`, can be traced by its index in the next run.
 
 ## Tests
 

@@ -1,7 +1,7 @@
 import numpy as np
 import trimesh
 import pytest
-from photontracer import available_backends, Backend, LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, OutputType, RandomNumberGenerator
+from photontracer import available_backends, Backend, TraceEvent, LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, OutputType, RandomNumberGenerator
 
 def test_reflection_angle(backend):
     sim = Simulation(backend=backend)
@@ -737,3 +737,157 @@ def test_healpix_histogram_matches_the_last_directions(backend):
     assert (escaped & (z < -2 / 3)).sum() <= south <= (escaped & (z <= 0)).sum()
     assert equator >= (escaped & (np.abs(z) < 1e-3)).sum()
     assert min(north, equator, south) > 0.2 * escaped.sum()
+
+
+def _diamond_ball_simulation(backend, rays=2000, **kwargs):
+    # A high refractive index traps rays by total internal reflection, so rays scatter many times
+    sim = Simulation(backend=backend)
+    ball = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+    sim.geometry = MeshGeometry(ball.vertices, ball.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 2.4 + 1e-4j)]
+    sim.wavelength_um = 1.0
+    sim.seed = 7
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=rays, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.9)
+    sim.outputs = [OutputType.SCATTERING_COUNT, OutputType.SOURCE_POSITION, OutputType.SOURCE_DIRECTION,
+                   OutputType.LAST_DIRECTION, OutputType.LAST_MEDIUM_ID, OutputType.RAY_STATE,
+                   OutputType.OPTICAL_PATH_LENGTH]
+    for name, value in kwargs.items():
+        setattr(sim, name, value)
+    return sim
+
+
+def test_trace_follows_a_ray_off_a_mirror(backend):
+    k = np.array([-np.sin(np.pi / 4), 0, -np.cos(np.pi / 4)])
+    slab = trimesh.creation.box(extents=[10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim = Simulation(backend=backend)
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFLECTIVE, 1.0, 0.0)]
+    sim.wavelength_um = 1.0
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=10, origin=-3 * k, direction=k, offset_radius=0)
+    sim.outputs = [OutputType.SCATTERING_COUNT]
+    sim.trace_rays = [3]
+    sim.run()
+
+    steps = sim.get_trace()
+    assert len(steps) == 2
+    assert list(steps["ray"]) == [3, 3] and list(steps["step"]) == [0, 1]
+    assert list(steps["event"]) == [TraceEvent.INTERACTION, TraceEvent.ESCAPED]
+    reflected = np.array([k[0], 0, -k[2]])
+    assert np.allclose(steps["direction_in"][0], k, atol=1e-6)
+    assert np.allclose(steps["direction_out"][0], reflected, atol=1e-5)
+    assert abs(steps["origin_out"][0][2]) < 1e-4 and steps["origin_out"][0][2] > 0
+    assert np.allclose(steps["origin_in"][1], steps["origin_out"][0])
+    assert np.allclose(steps["direction_in"][1], steps["direction_out"][0])
+    assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[3] == 1
+
+
+def test_trace_agrees_with_the_outputs(backend):
+    sim = _diamond_ball_simulation(backend)
+    sim.trace_rays = [0, 5, 99, 1500, 1999]
+    sim.run()
+    steps = sim.get_trace()
+    out = {o: sim.get_output_buffer(o) for o in (OutputType.SCATTERING_COUNT, OutputType.SOURCE_POSITION,
+                                                OutputType.SOURCE_DIRECTION, OutputType.LAST_DIRECTION,
+                                                OutputType.LAST_MEDIUM_ID, OutputType.RAY_STATE,
+                                                OutputType.OPTICAL_PATH_LENGTH)}
+    assert sorted(set(steps["ray"])) == [0, 5, 99, 1500, 1999]
+    for ray in (0, 5, 99, 1500, 1999):
+        mine = steps[steps["ray"] == ray]
+        assert len(mine) == out[OutputType.SCATTERING_COUNT][ray] + 1
+        assert list(mine["step"]) == list(range(len(mine)))
+        assert np.allclose(mine["origin_in"][0], out[OutputType.SOURCE_POSITION][ray])
+        assert np.allclose(mine["direction_in"][0], out[OutputType.SOURCE_DIRECTION][ray])
+        assert np.array_equal(mine["origin_in"][1:], mine["origin_out"][:-1])
+        assert np.array_equal(mine["direction_in"][1:], mine["direction_out"][:-1])
+        assert np.array_equal(mine["medium_in"][1:], mine["medium_out"][:-1])
+        assert (mine["event"][:-1] == TraceEvent.INTERACTION).all()
+        last = mine[-1]
+        assert np.array_equal(last["direction_out"], out[OutputType.LAST_DIRECTION][ray])
+        assert last["medium_out"] == out[OutputType.LAST_MEDIUM_ID][ray]
+        assert np.isclose(last["optical_path_length"], out[OutputType.OPTICAL_PATH_LENGTH][ray], rtol=1e-6)
+        expected = TraceEvent.ESCAPED if out[OutputType.RAY_STATE][ray] == 0 else TraceEvent.ABSORBED
+        assert last["event"] == expected
+
+
+def test_a_ray_found_in_a_run_can_be_traced_in_the_next(backend):
+    sim = _diamond_ball_simulation(backend)
+    sim.run()
+    counts = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
+    ray = int(counts.argmax())
+    assert counts[ray] >= 5
+
+    sim.trace_rays = [ray]
+    sim.run()
+    assert len(sim.get_trace()) == counts[ray] + 1
+    assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[ray] == counts[ray]
+
+    # steps beyond the limit are not stored
+    sim.max_trace_steps = 3
+    sim.run()
+    steps = sim.get_trace()
+    assert list(steps["step"]) == [0, 1, 2]
+    assert (steps["event"] == TraceEvent.INTERACTION).all()
+
+
+def test_trace_ends_with_max_scattering(backend):
+    sim = _diamond_ball_simulation(backend, max_scattering_count=3)
+    sim.run()
+    ray = int(np.flatnonzero(sim.get_output_buffer(OutputType.RAY_STATE) == 2)[0])
+    sim.trace_rays = [ray]
+    sim.run()
+    steps = sim.get_trace()
+    assert len(steps) == 4
+    assert steps["event"][-1] == TraceEvent.MAX_SCATTERING
+    assert np.array_equal(steps["origin_in"][-1], steps["origin_out"][-1])
+
+
+def test_traces_are_checked(backend):
+    sim = _diamond_ball_simulation(backend, rays=100)
+    with pytest.raises(RuntimeError, match="traced"):
+        sim.get_trace()
+    sim.run()
+    with pytest.raises(RuntimeError, match="traced"):
+        sim.get_trace()
+    with pytest.raises(ValueError, match="256"):
+        sim.trace_rays = list(range(257))
+    with pytest.raises(ValueError, match="max_trace_steps"):
+        sim.max_trace_steps = 0
+    sim.trace_rays = [100]
+    with pytest.raises(ValueError, match="100 rays"):
+        sim.run()
+    sim.trace_rays = [4, 2, 4]
+    assert sim.trace_rays == [2, 4]
+    sim.run()
+    assert sorted(set(sim.get_trace()["ray"])) == [2, 4]
+
+
+def test_a_run_without_traced_rays_still_works_after_a_traced_one(backend):
+    sim = _diamond_ball_simulation(backend, rays=500)
+    sim.run()
+    plain = sim.get_output_buffer(OutputType.SCATTERING_COUNT).copy()
+    sim.trace_rays = [1, 2]
+    sim.run()
+    assert np.array_equal(sim.get_output_buffer(OutputType.SCATTERING_COUNT), plain)
+    sim.trace_rays = []
+    sim.run()
+    assert np.array_equal(sim.get_output_buffer(OutputType.SCATTERING_COUNT), plain)
+    with pytest.raises(RuntimeError, match="traced"):
+        sim.get_trace()
+
+
+def test_traces_agree_between_backends():
+    if len(available_backends()) < 2:
+        pytest.skip("needs two backends")
+    traces = []
+    for backend in available_backends():
+        sim = _diamond_ball_simulation(backend, rays=200)
+        sim.trace_rays = [1, 2, 3]
+        sim.run()
+        traces.append(sim.get_trace())
+    first, second = traces
+    for ray in (1, 2, 3):
+        a, b = first[first["ray"] == ray], second[second["ray"] == ray]
+        n = 3  # the rays follow the same random numbers; later steps may differ in the last bits
+        assert len(a) >= n and len(b) >= n
+        for field in ("origin_in", "direction_in", "origin_out", "direction_out", "stokes"):
+            assert np.allclose(a[field][:n], b[field][:n], atol=1e-3), field

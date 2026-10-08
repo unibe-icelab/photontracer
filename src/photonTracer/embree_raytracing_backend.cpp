@@ -108,7 +108,7 @@ void countEscapedDirection(const InputParameters &params, float3 direction, uint
 void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupData &hitGroup,
                    const InputParameters &params, uint3 launchIndex, uint3 launchShape)
 {
-    uint32_t idx = launchIndex.x + launchIndex.y * launchShape.x + launchIndex.z * launchShape.x * launchShape.y;
+    uint32_t idx = linearizeLaunchIndex(launchIndex, launchShape);
 
     Pcg32State rng = makePcg32(params.initSeed, idx);
     auto nextSample = [&rng]() { return rng.nextFloat(); };
@@ -127,11 +127,21 @@ void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupD
 
     MemoryRayContext ctx{&prd};
     uint32_t scatteringCount = 0;
+    const int traceSlot = findTraceSlot(params.trace, idx);
     for (;;)
     {
+        if (traceSlot >= 0)
+        {
+            recordTraceStart(params.trace, traceSlot, idx, scatteringCount, prd);
+        }
+
         if (params.maxScatteringCount > 0 && scatteringCount >= params.maxScatteringCount)
         {
             prd.state.absorbed = 2;
+            if (traceSlot >= 0)
+            {
+                recordTraceEnd(params.trace, traceSlot, scatteringCount, prd, TRACE_MAX_SCATTERING);
+            }
             break;
         }
 
@@ -143,6 +153,10 @@ void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupD
                 countEscapedDirection(params, prd.direction, launchIndex, launchShape);
             }
             prd.state.done = true;
+            if (traceSlot >= 0)
+            {
+                recordTraceEnd(params.trace, traceSlot, scatteringCount, prd, TRACE_ESCAPED);
+            }
             break;
         }
 
@@ -163,6 +177,11 @@ void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupD
         }
 
         handleMaterialHit(ctx, hit, hitGroup, params.lengthScale, params.useComplexFresnel, nextSample);
+
+        if (traceSlot >= 0)
+        {
+            recordTraceEnd(params.trace, traceSlot, scatteringCount, prd, traceEventOf(prd.state));
+        }
 
         if (prd.state.done)
         {
@@ -200,13 +219,6 @@ int32_t countSurfaceCrossings(const EmbreeAccelerationStructure &structure, cons
     return backFaces - frontFaces;
 }
 
-void requireSupportedOutputs(uint32_t outputFlags)
-{
-    if (outputFlags & (OUT_LOGS | OUT_LOG_OFFSETS))
-    {
-        throw std::runtime_error("The Embree backend does not support the LOGS and LOG_OFFSETS outputs yet");
-    }
-}
 } // namespace
 
 EmbreeRaytracingBackend::EmbreeRaytracingBackend(uint32_t cpuThreads)
@@ -411,7 +423,6 @@ void EmbreeRaytracingBackend::updateShaderBindingTable(const std::vector<Materia
 
 void EmbreeRaytracingBackend::launch(InputParameters &params, const IGeometry &geometry, uint3 launchShape)
 {
-    requireSupportedOutputs(params.outputFlags);
     const EmbreeAccelerationStructure &structure = accelerationStructure(geometry);
 
     const uint64_t rayCount = static_cast<uint64_t>(launchShape.x) * launchShape.y * launchShape.z;

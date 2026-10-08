@@ -73,8 +73,6 @@ __all__ = [
     "SOURCE_POSITION",
     "SCATTERING_ANGLE",
     "Q_MINUS_AXIS_IN",
-    "LOGS",
-    "LOG_OFFSETS",
     "DIRECTION_HISTOGRAM_HEALPIX",
     "RefractiveIndex",
     "Diffuse",
@@ -93,6 +91,7 @@ __all__ = [
     "Simulation",
     "is_cuda_available",
     "available_backends",
+    "TraceEvent",
     "Backend",
     "OPTIX",
     "EMBREE",
@@ -226,6 +225,38 @@ class MaterialType:
     def value(self) -> int: ...
 
 
+class TraceEvent:
+    """What happened to a traced ray in one step (``event`` field of :meth:`Simulation.get_trace`).
+
+    Members:
+
+    * ``INTERACTION`` – reflected, refracted or scattered; the ray goes on.
+    * ``ESCAPED`` – the ray left the scene.
+    * ``ABSORBED`` – the ray was absorbed.
+    * ``MAX_SCATTERING`` – the ray reached ``max_scattering_count``.
+    * ``ERROR`` – the ray ended on an error.
+    """
+
+    INTERACTION: TraceEvent
+    ESCAPED: TraceEvent
+    ABSORBED: TraceEvent
+    MAX_SCATTERING: TraceEvent
+    ERROR: TraceEvent
+    __members__: dict[str, TraceEvent]
+
+    def __eq__(self, other: typing.Any) -> bool: ...
+
+    def __hash__(self) -> int: ...
+
+    def __init__(self, value: int) -> None: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def value(self) -> int: ...
+
+
 class Backend:
     """Enum selecting where a :class:`Simulation` traces its rays.
 
@@ -235,7 +266,7 @@ class Backend:
 
     * ``OPTIX`` – NVIDIA GPU with OptiX.
     * ``EMBREE`` – CPU with Embree and TBB. Supports only the ``PCG32``
-      generator so far, and not the ``LOGS`` and ``LOG_OFFSETS`` outputs.
+      generator.
     """
 
     OPTIX: Backend
@@ -324,10 +355,6 @@ class OutputType:
       source direction and the final direction.
     * ``Q_MINUS_AXIS_IN`` – ``float32[N, 3]`` — the Q− reference axis used
       for the source Stokes vector.
-    * ``LOGS`` – ``char[N, LOG_BYTES_PER_RAY]`` — raw per-ray debug log
-      strings (only available when debug logging is compiled in).
-    * ``LOG_OFFSETS`` – ``uint32[N]`` — byte offsets into the ``LOGS`` buffer
-      for each ray.
     * ``DIRECTION_HISTOGRAM_HEALPIX`` – ``uint32[npix]`` — histogram counting
       how many rays ended in each HEALPix pixel (requires
       :attr:`Simulation.direction_healpix_nside` > 0).
@@ -346,8 +373,6 @@ class OutputType:
     SOURCE_POSITION: OutputType
     SCATTERING_ANGLE: OutputType
     Q_MINUS_AXIS_IN: OutputType
-    LOGS: OutputType
-    LOG_OFFSETS: OutputType
     DIRECTION_HISTOGRAM_HEALPIX: OutputType
     __members__: dict[str, OutputType]
 
@@ -1076,6 +1101,39 @@ class Simulation:
         """
         ...
 
+    @property
+    def trace_rays(self) -> list[int]:
+        """Indices of the rays whose steps are recorded (at most 256).
+
+        An index is the position of the ray in the output buffers. Seeds are deterministic, so a ray
+        found in a normal run can be traced in the next one. Sorted and without duplicates when read.
+        """
+        ...
+
+    @trace_rays.setter
+    def trace_rays(self, value: typing.Sequence[int]) -> None: ...
+
+    @property
+    def max_trace_steps(self) -> int:
+        """Steps recorded per traced ray (default ``1000``). Later steps are not stored."""
+        ...
+
+    @max_trace_steps.setter
+    def max_trace_steps(self, value: int) -> None: ...
+
+    def get_trace(self) -> numpy.ndarray:
+        """Return the steps of the traced rays of the last run, ordered by ray and step.
+
+        A structured array with the fields ``ray``, ``step``, ``event`` (a :class:`TraceEvent`),
+        ``medium_in``, ``medium_out``, ``origin_in``, ``direction_in``, ``origin_out``,
+        ``direction_out`` (each ``float32[3]``), ``stokes`` (``float32[4]``) and
+        ``optical_path_length``. A step goes from a start to the next interaction: ``origin_in`` and
+        ``direction_in`` are the ray before it, ``origin_out`` (just off the surface that was hit) and
+        ``direction_out`` after it. The Stokes vector and the optical path length are those after the step.
+        A ray with ``SCATTERING_COUNT`` scatterings has that many steps plus the last one.
+        """
+        ...
+
     def get_output_buffer(self, output_type: OutputType) -> numpy.ndarray:
         """Copy an output buffer from the GPU and return it as a NumPy array.
 
@@ -1374,6 +1432,4 @@ SOURCE_DIRECTION: OutputType
 SOURCE_POSITION: OutputType
 SCATTERING_ANGLE: OutputType
 Q_MINUS_AXIS_IN: OutputType
-LOGS: OutputType
-LOG_OFFSETS: OutputType
 DIRECTION_HISTOGRAM_HEALPIX: OutputType

@@ -4,7 +4,6 @@ cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 option(PHOTONTRACER_BUILD_TESTS "Build tests" OFF)
 option(PHOTONTRACER_BUILD_OPTIX "Build the OptiX GPU backend (needs the CUDA toolkit and an NVIDIA GPU)" ON)
 option(PHOTONTRACER_BUILD_EMBREE "Build the Embree CPU backend (needs TBB)" ON)
-option(ENABLE_DEBUG_PRINT_KERNEL "Enable debug prints in CUDA kernels" OFF)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -62,10 +61,6 @@ if(IS_DEBUG_BUILD)
       set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -G -g")
     endif()
   endif()
-endif()
-
-if(ENABLE_DEBUG_PRINT_KERNEL)
-    add_compile_definitions(DEBUG_PRINT_KERNEL)
 endif()
 
 if(PHOTONTRACER_BUILD_OPTIX)
