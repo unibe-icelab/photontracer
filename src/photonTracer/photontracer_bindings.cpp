@@ -4,8 +4,8 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
-#include <cuda_runtime.h>
 #include <limits>
+#include <optional>
 #include <vector>
 
 #include "backend_factory.h"
@@ -111,6 +111,11 @@ PYBIND11_MODULE(photontracer_bindings, m)
     py::enum_<RandomNumberGenerator>(m, "RandomNumberGenerator")
         .value("PCG32", RandomNumberGenerator::PCG32)
         .value("MRG32K3A", RandomNumberGenerator::MRG32K3A)
+        .export_values();
+
+    py::enum_<BackendType>(m, "Backend")
+        .value("OPTIX", BackendType::OPTIX)
+        .value("EMBREE", BackendType::EMBREE)
         .export_values();
 
     py::enum_<LengthUnit>(m, "LengthUnit")
@@ -574,9 +579,21 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def_property("focus_distance", &CameraRayGenerator::getFocusDistance, &CameraRayGenerator::setFocusDistance);
 
     py::class_<Simulation, std::shared_ptr<Simulation>>(m, "Simulation")
-        .def(py::init([](int gpuId, int optixLoggingLevel, bool enableValidationMode)
-                      { return std::make_unique<Simulation>(makeBackend(gpuId, optixLoggingLevel, enableValidationMode)); }),
-             py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false)
+        .def(py::init([](int gpuId, int optixLoggingLevel, bool enableValidationMode, std::optional<BackendType> backend, uint32_t cpuThreads)
+                      {
+                          const std::vector<BackendType> available = availableBackends();
+                          if (available.empty())
+                          {
+                              throw std::runtime_error("This build of photontracer contains no raytracing backend");
+                          }
+                          BackendOptions options;
+                          options.gpuId = gpuId;
+                          options.optixLoggingLevel = optixLoggingLevel;
+                          options.enableValidationMode = enableValidationMode;
+                          options.cpuThreads = cpuThreads;
+                          return std::make_unique<Simulation>(makeBackend(backend.value_or(available.front()), options)); }),
+             py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false,
+             py::arg("backend") = py::none(), py::arg("cpu_threads") = 0)
         .def("run", &Simulation::run, "Run the simulation")
         .def("free_device_memory", &Simulation::freeDeviceMemory,
              "Free device-side buffers held by the simulation (pipeline, outputs, and geometry acceleration structures).")
@@ -756,10 +773,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
                       },
                       "Get or set the list of output types for the simulation.");
 
-    // Module-level function to check CUDA availability
-    m.def("is_cuda_available", []() -> bool
-          {
-        int deviceCount = 0;
-        cudaError_t err = cudaGetDeviceCount(&deviceCount);
-        return err == cudaSuccess && deviceCount > 0; }, "Check if CUDA is available and properly initialized. Returns True if CUDA device(s) are detected.");
+    m.def("is_cuda_available", &isCudaAvailable,
+          "Check if CUDA is available and properly initialized. Returns True if CUDA device(s) are detected.");
+    m.def("available_backends", &availableBackends, "The raytracing backends of this build, the default one first.");
 }

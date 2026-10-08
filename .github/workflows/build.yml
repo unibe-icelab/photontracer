@@ -29,19 +29,26 @@ jobs:
         shell: bash -el {0}
         run: cmake --build build
   cpu-tests:
-    name: CPU tests (no CUDA)
+    name: CPU build and tests (no CUDA)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev
-      - name: Configure
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtest-dev libtbb-dev
+          pip install numpy trimesh pytest
+      - name: Build the Python package with the Embree backend
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DPHOTONTRACER_BUILD_OPTIX=OFF
-          -DPHOTONTRACER_BUILD_TESTS=ON
-      - name: Build
-        run: cmake --build build
-      - name: Test
+          pip install -v .
+          -C cmake.define.PHOTONTRACER_BUILD_OPTIX=OFF
+          -C cmake.define.PHOTONTRACER_BUILD_TESTS=ON
+      - name: C++ tests
         run: ctest --test-dir build --output-on-failure
+      - name: Python tests
+        run: pytest photontracer/test

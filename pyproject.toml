@@ -29,7 +29,9 @@ wheel.license-files = [
   "external/otk/Memory/LICENSE.txt",
   "external/optix/LICENSE.txt",
   "external/optix/license_info.txt",
-  "external/pybind11/LICENSE"
+  "external/pybind11/LICENSE",
+  "external/embree/LICENSE.txt",
+  "external/embree/third-party-programs.txt"
 ]
 
 [project.optional-dependencies]
