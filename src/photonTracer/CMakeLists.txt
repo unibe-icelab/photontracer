@@ -14,9 +14,17 @@ if(NOT PHOTONTRACER_BUILD_OPTIX)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(PhotonTracerCore PRIVATE -Wall -Wextra -Wpedantic)
   endif()
-  return()
 endif()
 
+if(PHOTONTRACER_BUILD_EMBREE)
+  add_library(PhotonTracerEmbree STATIC embree_raytracing_backend.cpp)
+  target_link_libraries(PhotonTracerEmbree PUBLIC PhotonTracerCore embree TBB::tbb)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(PhotonTracerEmbree PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+endif()
+
+if(PHOTONTRACER_BUILD_OPTIX)
 include(BuildConfig)
 include(embed_cuda)
 
@@ -76,6 +84,12 @@ target_link_libraries(PhotonTracerOptix PUBLIC
   CUDA::cudart_static
 )
 
+endif()
+
+if(NOT PHOTONTRACER_BUILD_OPTIX AND NOT PHOTONTRACER_BUILD_EMBREE)
+  return()
+endif()
+
 pybind11_add_module(photontracer_bindings
   photontracer_bindings.cpp
   backend_factory.cpp
@@ -84,7 +98,9 @@ pybind11_add_module(photontracer_bindings
 install(TARGETS photontracer_bindings
         LIBRARY DESTINATION photontracer)
 
-otk_target_options(photontracer_bindings)
+if(PHOTONTRACER_BUILD_OPTIX)
+  otk_target_options(photontracer_bindings)
+endif()
 
 # GCC may emit a false positive in pybind11 internals (-Wstringop-overread).
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -92,7 +108,10 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   target_link_options(photontracer_bindings PRIVATE -Wno-stringop-overread)
 endif()
 
-target_link_libraries(photontracer_bindings PRIVATE
-  PhotonTracerCore
-  PhotonTracerOptix
-)
+target_link_libraries(photontracer_bindings PRIVATE PhotonTracerCore)
+if(PHOTONTRACER_BUILD_OPTIX)
+  target_link_libraries(photontracer_bindings PRIVATE PhotonTracerOptix)
+endif()
+if(PHOTONTRACER_BUILD_EMBREE)
+  target_link_libraries(photontracer_bindings PRIVATE PhotonTracerEmbree)
+endif()

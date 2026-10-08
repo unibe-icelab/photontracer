@@ -71,9 +71,9 @@ def gpu_memory_mb():
     return None
 
 
-def run_scene(name, rays, repeats, grid, rng):
+def run_scene(name, rays, repeats, grid, rng, backend):
     geometry, generator, kwargs = instances_scene(grid) if name == "instances" else SCENES[name]()
-    sim = Simulation(gpu_id=0)
+    sim = Simulation(backend=getattr(photontracer.Backend, backend)) if backend else Simulation(gpu_id=0)
     if rng:
         sim.random_number_generator = getattr(photontracer.RandomNumberGenerator, rng)
     sim.geometry = geometry
@@ -154,6 +154,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scene", action="append", choices=SCENES, help="scene to run (default: all)")
     parser.add_argument("--rng", choices=["PCG32", "MRG32K3A"], help="random number generator (default: that of the build)")
+    parser.add_argument("--backend", choices=["OPTIX", "EMBREE"], help="backend (default: that of the build)")
     parser.add_argument("--rays", type=int, default=10_000_000, help="rays per scene")
     parser.add_argument("--grid", type=int, default=68, help="instances scene: spheres per side (grid**3 instances)")
     parser.add_argument("--repeats", type=int, default=5, help="timed runs after the first")
@@ -166,7 +167,7 @@ def main():
     results = []
     print(f"{'scene':<10} {'first [ms]':>10} {'median [ms]':>12} {'Mrays/s':>9} {'GPU [MB]':>9}  mean scatter")
     for name in args.scene or SCENES:
-        r = run_scene(name, args.rays, args.repeats, args.grid, args.rng)
+        r = run_scene(name, args.rays, args.repeats, args.grid, args.rng, args.backend)
         results.append(r)
         print(f"{name:<10} {r['first_run_ms']:>10.1f} {r['median_ms']:>12.1f} {r['mrays_per_s']:>9.2f} "
               f"{r['gpu_memory_mb'] or float('nan'):>9.0f}  {r['mean_scattering_count']:.4f}")

@@ -4,8 +4,29 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include "i_raytracing_backend.h"
 
-/// Creates the raytracing backend of this build; throws if the build has none.
-std::unique_ptr<IRaytracingBackend> makeBackend(int gpuId, int optixLoggingLevel, bool enableValidationMode);
+enum class BackendType
+{
+    OPTIX,  ///< NVIDIA GPU
+    EMBREE, ///< CPU
+};
+
+struct BackendOptions
+{
+    int gpuId = 0; ///< OptiX only
+    int optixLoggingLevel = 1; ///< OptiX only
+    bool enableValidationMode = false; ///< OptiX only
+    uint32_t cpuThreads = 0; ///< Embree only; 0 uses all cores
+};
+
+/// The backends this build contains, the preferred one first
+std::vector<BackendType> availableBackends();
+
+/// Creates a backend; throws if this build does not contain it.
+std::unique_ptr<IRaytracingBackend> makeBackend(BackendType type, const BackendOptions &options);
+
+/// Whether a CUDA device is present; always false in builds without OptiX
+bool isCudaAvailable();

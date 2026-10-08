@@ -110,8 +110,8 @@ SCENES = {
 }
 
 
-def run_scene(scene, rays, generator):
-    sim = Simulation(gpu_id=0)
+def run_scene(scene, rays, generator, backend):
+    sim = Simulation(backend=getattr(photontracer.Backend, backend)) if backend else Simulation(gpu_id=0)
     if generator:
         sim.random_number_generator = getattr(photontracer.RandomNumberGenerator, generator)
     sim.geometry = scene["geometry"]()
@@ -236,6 +236,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scene", action="append", choices=SCENES, help="scene to run (default: all)")
     parser.add_argument("--rng", choices=["PCG32", "MRG32K3A"], help="random number generator (default: that of the build)")
+    parser.add_argument("--backend", choices=["OPTIX", "EMBREE"], help="backend (default: that of the build)")
     parser.add_argument("--rays", type=int, default=200_000, help="rays per scene")
     parser.add_argument("--label", help="name of this build in the results")
     parser.add_argument("--output", help="write the hashes to this JSON file")
@@ -258,7 +259,7 @@ def main():
     summaries = {}
     generator = None
     for name in args.scene or SCENES:
-        arrays, generator = run_scene(SCENES[name], args.rays, args.rng)
+        arrays, generator = run_scene(SCENES[name], args.rays, args.rng, args.backend)
         results[name] = digest(arrays)
         if args.summary:
             summaries[name] = summarize(arrays)

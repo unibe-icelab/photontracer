@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 # Build options
 option(PHOTONTRACER_BUILD_TESTS "Build tests" OFF)
 option(PHOTONTRACER_BUILD_OPTIX "Build the OptiX GPU backend (needs the CUDA toolkit and an NVIDIA GPU)" ON)
+option(PHOTONTRACER_BUILD_EMBREE "Build the Embree CPU backend (needs TBB)" ON)
 option(ENABLE_DEBUG_PRINT_KERNEL "Enable debug prints in CUDA kernels" OFF)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -19,9 +20,9 @@ else()
   project(PlanetaryRaytracer LANGUAGES C CXX)
 endif()
 
-if(NOT PHOTONTRACER_BUILD_OPTIX AND NOT PHOTONTRACER_BUILD_TESTS)
-  message(FATAL_ERROR "No raytracing backend is enabled. Enable PHOTONTRACER_BUILD_OPTIX, "
-                      "or PHOTONTRACER_BUILD_TESTS to build the CPU tests only.")
+if(NOT PHOTONTRACER_BUILD_OPTIX AND NOT PHOTONTRACER_BUILD_EMBREE AND NOT PHOTONTRACER_BUILD_TESTS)
+  message(FATAL_ERROR "No raytracing backend is enabled. Enable PHOTONTRACER_BUILD_OPTIX or "
+                      "PHOTONTRACER_BUILD_EMBREE, or PHOTONTRACER_BUILD_TESTS to build the CPU tests only.")
 endif()
 
 if(PHOTONTRACER_BUILD_OPTIX)
@@ -85,7 +86,24 @@ if(PHOTONTRACER_BUILD_TESTS)
   find_package( GTest REQUIRED )
 endif()
 
-if(PHOTONTRACER_BUILD_OPTIX)
+if(PHOTONTRACER_BUILD_EMBREE)
+  find_package(TBB 2021 CONFIG REQUIRED)
+
+  # Only triangles and instances are traced; leaving the rest out keeps the build short
+  set(EMBREE_STATIC_LIB ON CACHE BOOL "")
+  set(EMBREE_TUTORIALS OFF CACHE BOOL "")
+  set(BUILD_TESTING OFF CACHE BOOL "")
+  set(EMBREE_ISPC_SUPPORT OFF CACHE BOOL "")
+  set(EMBREE_GEOMETRY_CURVE OFF CACHE BOOL "")
+  set(EMBREE_GEOMETRY_GRID OFF CACHE BOOL "")
+  set(EMBREE_GEOMETRY_POINT OFF CACHE BOOL "")
+  set(EMBREE_GEOMETRY_QUAD OFF CACHE BOOL "")
+  set(EMBREE_GEOMETRY_SUBDIVISION OFF CACHE BOOL "")
+  set(EMBREE_GEOMETRY_USER OFF CACHE BOOL "")
+  add_subdirectory(external/embree)
+endif()
+
+if(PHOTONTRACER_BUILD_OPTIX OR PHOTONTRACER_BUILD_EMBREE)
   set(Python3_FIND_STRATEGY LOCATION)
   set(Python3_FIND_VIRTUALENV FIRST)
   find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
@@ -107,6 +125,9 @@ if(PHOTONTRACER_BUILD_OPTIX)
   add_compile_definitions(PHOTONTRACER_HAS_OPTIX)
 else()
   add_compile_definitions(PHOTONTRACER_NO_CUDA)
+endif()
+if(PHOTONTRACER_BUILD_EMBREE)
+  add_compile_definitions(PHOTONTRACER_HAS_EMBREE)
 endif()
 
 add_subdirectory(src)

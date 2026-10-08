@@ -23,6 +23,14 @@
 #define PT_HD __host__ __device__
 #define PT_INLINE __forceinline__
 
+#if !defined(__CUDACC__)
+// A host compiler using the CUDA headers, as for the CPU backend of an OptiX build,
+// does not get the CUDA math functions
+using std::isfinite;
+using std::isnan;
+inline float rsqrtf(float x) { return 1.0f / std::sqrt(x); }
+#endif
+
 #else
 
 #define PT_HD
