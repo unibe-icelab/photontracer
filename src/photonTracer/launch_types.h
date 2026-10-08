@@ -10,6 +10,7 @@ enum RayGeneratorType
     RAYGEN_PARALLEL,
     RAYGEN_ISOTROPIC,
     RAYGEN_CAMERA,
+    RAYGEN_DIFFUSE,
 };
 
 
@@ -42,6 +43,13 @@ union RayGeneratorData
         uint32_t samplesPerPixel;
         uint32_t enableDefocus;
     } camera;
+    struct DiffuseSource
+    {
+        uint32_t numberOfRays;
+        float3 origin;
+        float3 direction;
+        float offsetRadius;
+    } diffuse;
 };
 
 

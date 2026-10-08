@@ -123,6 +123,60 @@ private:
     float offsetRadius_;
 };
 
+class DiffuseRayGenerator : public IRayGenerator
+{
+public:
+    DiffuseRayGenerator(uint32_t numberOfRays, float3 origin, float3 direction, float offsetRadius)
+        : numberOfRays_(numberOfRays), origin_(origin), direction_(direction), offsetRadius_(offsetRadius)
+    {
+        direction_ = otk::normalize(direction_);
+    }
+
+    RayGeneratorType getType() const override { return RAYGEN_DIFFUSE; }
+
+    RayGeneratorData getData() const override
+    {
+        RayGeneratorData data;
+        data.diffuse.numberOfRays = numberOfRays_;
+        data.diffuse.origin = origin_;
+        data.diffuse.direction = direction_;
+        data.diffuse.offsetRadius = offsetRadius_;
+        return data;
+    }
+
+    uint3 getLaunchShape() const override
+    {
+        return make_uint3(numberOfRays_, 1, 1);
+    }
+
+    // Getters/setters for Python access
+
+    uint32_t getNumberOfRays() const { return numberOfRays_; }
+    void setNumberOfRays(uint32_t numberOfRays)
+    {
+        if (numberOfRays == 0)
+        {
+            throw std::invalid_argument("number_of_rays must be greater than zero");
+        }
+        numberOfRays_ = numberOfRays;
+    }
+
+    float3 getOrigin() const { return origin_; }
+    void setOrigin(const float3 &origin) { origin_ = origin; }
+
+    float3 getDirection() const { return direction_; }
+    void setDirection(const float3 &direction) { direction_ = otk::normalize(direction); }
+
+    float getOffsetRadius() const { return offsetRadius_; }
+    void setOffsetRadius(float radius) { offsetRadius_ = radius; }
+
+private:
+    uint32_t numberOfRays_ = 1;
+    float3 origin_;
+    float3 direction_;
+    float offsetRadius_;
+};
+
 class CameraRayGenerator : public IRayGenerator
 {
 public:

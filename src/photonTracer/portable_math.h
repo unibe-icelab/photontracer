@@ -110,3 +110,27 @@ inline float4 operator*(const Transform4 &lhs, const float4 &rhs)
 } // namespace otk
 
 #endif
+
+/**
+ * @brief Direction with a density proportional to the cosine to the axis (Malley's method):
+ * a uniform point of the unit disk, lifted onto the hemisphere. Needs no rejection loop and no normalization.
+ *
+ * @param[in] u1 A uniform random number in (0, 1]
+ * @param[in] u2 A uniform random number in (0, 1]
+ * @param[in] axis The axis of the hemisphere as a unit vector
+ *
+ * @return A unit vector in the hemisphere around the axis, never exactly perpendicular to it
+ */
+PT_INLINE PT_HD float3 cosineWeightedDirection(float u1, float u2, const float3 &axis)
+{
+    // Orthonormal basis around the axis without a branch on the direction (Duff et al. 2017)
+    const float sign = copysignf(1.0f, axis.z);
+    const float a = -1.0f / (sign + axis.z);
+    const float b = axis.x * axis.y * a;
+    const float3 t = make_float3(1.0f + sign * axis.x * axis.x * a, sign * b, -sign * axis.x);
+    const float3 s = make_float3(b, sign + axis.y * axis.y * a, -axis.y);
+
+    const float r = sqrtf(1.0f - u1); // radius on the disk, so cos(theta) = sqrt(u1)
+    const float phi = 2.0f * static_cast<float>(M_PI) * u2;
+    return (r * cosf(phi)) * t + (r * sinf(phi)) * s + sqrtf(u1) * axis;
+}

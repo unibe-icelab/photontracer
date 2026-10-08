@@ -143,6 +143,32 @@ PT_INLINE PT_HD void computeRayIsotropic(const RayGeneratorData::IsotropicSource
     direction = -direction; // Pointing inward
 }
 
+/// Diffuse source: a disk of rays around the origin, with cosine-weighted directions around the axis
+template <typename NextSampleT>
+PT_INLINE PT_HD void computeRayDiffuse(const RayGeneratorData::DiffuseSource &source, NextSampleT &nextSample, float3 &origin, float3 &direction)
+{
+    origin = source.origin;
+    const float3 axis = source.direction;
+
+    // Compute orthogonal vectors u and v
+    float3 u = make_float3(0.0f, 1.0f, 0.0f);
+    if (fabsf(axis.y) > 0.999f)
+    {
+        u = make_float3(1.0f, 0.0f, 0.0f);
+    }
+    u = otk::normalize(otk::cross(axis, u));
+    float3 v = otk::normalize(otk::cross(axis, u));
+
+    // Uniform point of the disk
+    const float radius = source.offsetRadius * sqrtf(nextSample());
+    const float angle = 2.0f * static_cast<float>(M_PI) * nextSample();
+    origin += radius * (cosf(angle) * u + sinf(angle) * v);
+
+    const float u1 = nextSample();
+    const float u2 = nextSample();
+    direction = cosineWeightedDirection(u1, u2, axis);
+}
+
 /// Linear ray index of a camera launch, whose launch index is (sample, pixel x, pixel y)
 PT_INLINE PT_HD uint32_t cameraRayIndex(const RayGeneratorData::CameraSource &camera, uint3 launchIndex)
 {
@@ -230,6 +256,10 @@ PT_INLINE PT_HD bool computeRay(
     else if (type == RAYGEN_ISOTROPIC)
     {
         computeRayIsotropic(data.isotropic, nextSample, origin, direction);
+    }
+    else if (type == RAYGEN_DIFFUSE)
+    {
+        computeRayDiffuse(data.diffuse, nextSample, origin, direction);
     }
     else if (type == RAYGEN_CAMERA)
     {

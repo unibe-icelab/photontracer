@@ -214,6 +214,58 @@ TEST(RayGeneration, CameraDefocusMovesTheOriginAndUsesTwoMoreSamples)
     expectNear(origin, camera.center + make_float3(std::cos(angle) * radius * 0.1f, std::sin(angle) * radius * 0.1f, 0.0f), 1e-5f);
 }
 
+TEST(RayGeneration, DiffuseOffsetsTheOriginAndDrawsCosineWeightedDirections)
+{
+    RayGeneratorData::DiffuseSource source{};
+    source.origin = make_float3(1, 2, 3);
+    source.direction = make_float3(0, 0, -1);
+    source.offsetRadius = 2.0f;
+
+    float3 origin, direction;
+    // Origin on the rim, direction along the axis; always four random numbers
+    ScriptedSample rim{1.0f, 0.3f, 1.0f, 0.5f};
+    computeRayDiffuse(source, rim, origin, direction);
+    EXPECT_EQ(rim.used, 4u);
+    EXPECT_NEAR(otk::length(origin - source.origin), 2.0f, 1e-5);
+    EXPECT_NEAR(otk::dot(origin - source.origin, source.direction), 0.0f, 1e-5);
+    expectNear(direction, source.direction);
+
+    // Origin on the quarter-radius circle (u = 1/16), direction at cos(theta) = 0.5
+    ScriptedSample inner{0.0625f, 0.8f, 0.25f, 0.1f};
+    computeRayDiffuse(source, inner, origin, direction);
+    EXPECT_NEAR(otk::length(origin - source.origin), 0.5f, 1e-5);
+    EXPECT_NEAR(otk::length(direction), 1.0f, 1e-5);
+    EXPECT_NEAR(otk::dot(direction, source.direction), 0.5f, 1e-5);
+}
+
+TEST(RayGeneration, DiffuseDirectionsStayInTheHemisphereWithTheLambertDistribution)
+{
+    RayGeneratorData::DiffuseSource source{};
+    source.direction = otk::normalize(make_float3(1, 1, -2));
+    source.offsetRadius = 0.0f;
+
+    // Deterministic low-discrepancy numbers
+    uint32_t state = 12345u;
+    auto next = [&state]() -> float
+    {
+        state = state * 1664525u + 1013904223u;
+        return (static_cast<float>(state >> 8) + 1.0f) / 16777217.0f;
+    };
+
+    const int n = 200000;
+    double meanCos = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        float3 origin, direction;
+        computeRayDiffuse(source, next, origin, direction);
+        const float c = otk::dot(direction, source.direction);
+        ASSERT_GE(c, -1e-5f);
+        meanCos += c;
+    }
+    // E[cos] = 2/3 for a density proportional to cos
+    EXPECT_NEAR(meanCos / n, 2.0 / 3.0, 5e-3);
+}
+
 TEST(RayGeneration, ComputeRayDispatchesAndReportsUnknownTypes)
 {
     RayGeneratorData data{};
