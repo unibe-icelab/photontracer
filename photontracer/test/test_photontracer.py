@@ -694,3 +694,46 @@ def test_instances_can_share_a_mesh_and_a_geometry_can_be_reused(backend):
         gap = _beam_on_instances(backend, geometry, materials, origin=(14, 0, 10))
         assert (hit[OutputType.SCATTERING_COUNT] >= 1).all()
         assert (gap[OutputType.SCATTERING_COUNT] == 0).all()
+
+
+def _healpix_simulation(backend, nside=1):
+    sim = Simulation(backend=backend)
+    slab = trimesh.creation.box(extents=[10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)]
+    sim.wavelength_um = 1.0
+    sim.direction_healpix_nside = nside
+    return sim
+
+
+@pytest.mark.parametrize("direction, bins", [((0, 0, -1), range(8, 12)), ((0, 0, 1), range(0, 4))])
+def test_healpix_histogram_counts_rays_that_miss_in_one_bin(backend, direction, bins):
+    # Rays that never meet the slab leave in their start direction, a polar cap pixel
+    sim = _healpix_simulation(backend)
+    n = 1000
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=n, origin=[100, 0, 0], direction=direction, offset_radius=1)
+    sim.outputs = [OutputType.DIRECTION_HISTOGRAM_HEALPIX]
+    sim.run()
+    histogram = sim.get_output_buffer(OutputType.DIRECTION_HISTOGRAM_HEALPIX).ravel()
+    assert histogram.sum() == n
+    assert np.count_nonzero(histogram) == 1
+    assert histogram.argmax() in bins
+
+
+def test_healpix_histogram_matches_the_last_directions(backend):
+    # The 12 pixels of nside = 1 are diamonds: the 4 northern ones contain the cap z > 2/3 and
+    # lie in z >= 0, and the 4 southern ones mirror them
+    sim = _healpix_simulation(backend)
+    sim.ray_generator = IsotropicRayGenerator(number_of_rays=100000, center=(0, 0, 0), source_radius=20, offset_radius=3)
+    sim.outputs = [OutputType.DIRECTION_HISTOGRAM_HEALPIX, OutputType.LAST_DIRECTION, OutputType.RAY_STATE]
+    sim.run()
+    histogram = sim.get_output_buffer(OutputType.DIRECTION_HISTOGRAM_HEALPIX).ravel()
+    z = sim.get_output_buffer(OutputType.LAST_DIRECTION)[:, 2]
+    escaped = sim.get_output_buffer(OutputType.RAY_STATE) == 0
+
+    assert histogram.sum() == escaped.sum()
+    north, equator, south = histogram[0:4].sum(), histogram[4:8].sum(), histogram[8:12].sum()
+    assert (escaped & (z > 2 / 3)).sum() <= north <= (escaped & (z >= 0)).sum()
+    assert (escaped & (z < -2 / 3)).sum() <= south <= (escaped & (z <= 0)).sum()
+    assert equator >= (escaped & (np.abs(z) < 1e-3)).sum()
+    assert min(north, equator, south) > 0.2 * escaped.sum()

@@ -2,6 +2,7 @@
 // © 2024-2026, University of Bern, Space Research and Planetary Sciences, Physics Institute, Rafael Ottersberg
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -87,6 +88,23 @@ TriangleHit intersect(const EmbreeAccelerationStructure &structure, float3 origi
     return result;
 }
 
+/// Counts a ray that left the scene in the HEALPix bin of its direction. The histogram of a pixel is
+/// selected by the second and third launch index, as in the OptiX kernel.
+void countEscapedDirection(const InputParameters &params, float3 direction, uint3 launchIndex, uint3 launchShape)
+{
+    static_assert(sizeof(std::atomic<uint32_t>) == sizeof(uint32_t) && std::atomic<uint32_t>::is_always_lock_free,
+                  "the histogram is incremented through atomics");
+
+    const int bin = healpixAng2PixRing(static_cast<int>(params.healpixNside), otk::normalize(direction));
+    const uint32_t pixel = launchIndex.z * launchShape.y + launchIndex.y;
+    const uint64_t index = static_cast<uint64_t>(pixel) * params.healpixBinCount + bin;
+    if (bin >= 0 && index < static_cast<uint64_t>(params.healpixBinCount) * launchShape.y * launchShape.z)
+    {
+        auto *counter = reinterpret_cast<std::atomic<uint32_t> *>(params.deviceOutputBuffers.directionHistogramHealpix + index);
+        counter->fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupData &hitGroup,
                    const InputParameters &params, uint3 launchIndex, uint3 launchShape)
 {
@@ -120,6 +138,10 @@ void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupD
         const TriangleHit trace = intersect(structure, prd.origin, prd.direction);
         if (!trace.found)
         {
+            if (params.outputFlags & OUT_DIRECTION_HISTOGRAM_HEALPIX)
+            {
+                countEscapedDirection(params, prd.direction, launchIndex, launchShape);
+            }
             prd.state.done = true;
             break;
         }
@@ -180,9 +202,9 @@ int32_t countSurfaceCrossings(const EmbreeAccelerationStructure &structure, cons
 
 void requireSupportedOutputs(uint32_t outputFlags)
 {
-    if (outputFlags & (OUT_LOGS | OUT_LOG_OFFSETS | OUT_DIRECTION_HISTOGRAM_HEALPIX))
+    if (outputFlags & (OUT_LOGS | OUT_LOG_OFFSETS))
     {
-        throw std::runtime_error("The Embree backend does not support the LOGS, LOG_OFFSETS and DIRECTION_HISTOGRAM_HEALPIX outputs yet");
+        throw std::runtime_error("The Embree backend does not support the LOGS and LOG_OFFSETS outputs yet");
     }
 }
 } // namespace

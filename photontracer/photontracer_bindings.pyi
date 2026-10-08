@@ -235,8 +235,7 @@ class Backend:
 
     * ``OPTIX`` – NVIDIA GPU with OptiX.
     * ``EMBREE`` – CPU with Embree and TBB. Supports only the ``PCG32``
-      generator so far, and not the ``LOGS``, ``LOG_OFFSETS`` and
-      ``DIRECTION_HISTOGRAM_HEALPIX`` outputs.
+      generator so far, and not the ``LOGS`` and ``LOG_OFFSETS`` outputs.
     """
 
     OPTIX: Backend
