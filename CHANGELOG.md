@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - Remove the `LOGS` and `LOG_OFFSETS` outputs and the CMake option `ENABLE_DEBUG_PRINT_KERNEL`. They needed 1 MiB per ray, only worked in a special debug build and were not documented; the ray trace replaces them
 - Print progress messages (device in use, compile and launch times) only after `photontracer.set_verbose(True)`; before, they were always printed
 - Declare `numpy` as a dependency of the package, and require Python 3.9 or newer. The CPU CI job tests Python 3.9 and 3.13
+- Add the CMake option `PHOTONTRACER_USE_FASTMATH` (default on). Off compiles the CUDA kernels without `--use_fast_math` and the Embree physics without `-ffast-math`. With it on, the physics of the Embree backend is now compiled with `-ffast-math -fno-finite-math-only` (NaN encodes the random polarization, so finite-math-only has to stay off)
 - Compact mesh acceleration structures after building, controlled by the new `compact` argument of `MeshGeometry` (default on)
 
 ## 1.0.2 - 18-03-2026

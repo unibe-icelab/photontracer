@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 option(PHOTONTRACER_BUILD_TESTS "Build tests" OFF)
 option(PHOTONTRACER_BUILD_OPTIX "Build the OptiX GPU backend (needs the CUDA toolkit and an NVIDIA GPU)" ON)
 option(PHOTONTRACER_BUILD_EMBREE "Build the Embree CPU backend (needs TBB)" ON)
+option(PHOTONTRACER_USE_FASTMATH
+       "Compile the CUDA kernels and the physics of the Embree backend with fast math (faster, less IEEE-754-precise)" ON)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -17,6 +19,14 @@ if(PHOTONTRACER_BUILD_OPTIX)
   project(PlanetaryRaytracer LANGUAGES C CXX CUDA)
 else()
   project(PlanetaryRaytracer LANGUAGES C CXX)
+endif()
+
+# Fast math for the CPU code. -ffast-math implies -ffinite-math-only, which would make isnan() always
+# false, but NaN encodes the random polarization and undefined directions in the physics.
+if(PHOTONTRACER_USE_FASTMATH AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set(PHOTONTRACER_CPU_FASTMATH_FLAGS -ffast-math -fno-finite-math-only)
+else()
+  set(PHOTONTRACER_CPU_FASTMATH_FLAGS "")
 endif()
 
 if(NOT PHOTONTRACER_BUILD_OPTIX AND NOT PHOTONTRACER_BUILD_EMBREE AND NOT PHOTONTRACER_BUILD_TESTS)

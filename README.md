@@ -89,6 +89,16 @@ sim = photontracer.Simulation(backend=photontracer.Backend.EMBREE, cpu_threads=8
 
 `cpu_threads=0` (the default) uses all cores. The Embree backend supports only the PCG32 generator. Instances can be nested up to the CMake setting `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` (default 4); `Simulation.max_nested_geometry_levels` is limited to that plus one.
 
+### Fast math
+
+By default the CUDA kernels are compiled with `--use_fast_math`, as in the 1.0 releases, and the physics of the Embree backend with `-ffast-math -fno-finite-math-only`. The second flag has to stay: NaN encodes the random polarization and undefined directions, and plain `-ffast-math` would make `isnan()` always false. For standard IEEE arithmetic switch it off:
+
+```bash
+pip install . -C cmake.define.PHOTONTRACER_USE_FASTMATH=OFF
+```
+
+On an RTX GPU fast math is about 3–7% faster; on the CPU the difference is within the noise. Results differ in the last bits and agree statistically.
+
 ### Random number generator
 
 The kernels use PCG32 by default. It is much cheaper to seed than curand's MRG32k3a, which the 1.0
