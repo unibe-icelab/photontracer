@@ -1,10 +1,10 @@
 import numpy as np
 import trimesh
 import pytest
-from photontracer import LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, OutputType, RandomNumberGenerator
+from photontracer import available_backends, Backend, LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, OutputType, RandomNumberGenerator
 
-def test_reflection_angle():
-    sim = Simulation(gpu_id=0)
+def test_reflection_angle(backend):
+    sim = Simulation(backend=backend)
     angle_deg = 45
     angle_rad = np.radians(angle_deg)
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
@@ -57,9 +57,9 @@ def test_reflection_angle():
 
 @pytest.mark.parametrize("compact", [True, False])
 @pytest.mark.parametrize("subdivisions", [0, 6])
-def test_dense_mesh_reflection(subdivisions, compact):
+def test_dense_mesh_reflection(backend, subdivisions, compact):
     # A finely subdivided slab must behave like the 12-triangle one, with or without compaction.
-    sim = Simulation(gpu_id=0)
+    sim = Simulation(backend=backend)
     k = np.array([-np.sin(np.pi / 4), 0, -np.cos(np.pi / 4)])
     slab = trimesh.creation.box(extents=[10, 10, 1],
                                 transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
@@ -81,8 +81,8 @@ def test_dense_mesh_reflection(subdivisions, compact):
     assert np.allclose(k_out[reflected], [k[0], 0, -k[2]], atol=1e-5)
 
 
-def _box_simulation(materials, geometry=None):
-    sim = Simulation(gpu_id=0)
+def _box_simulation(backend, materials, geometry=None):
+    sim = Simulation(backend=backend)
     box = trimesh.creation.box(extents=[2, 2, 2])
     sim.geometry = geometry or MeshGeometry(box.vertices, box.faces)
     sim.wavelength_um = 1.0
@@ -103,34 +103,36 @@ def _instances(material_id):
                             np.eye(4, dtype=np.float32)[None, :3, :], [0], [material_id])
 
 
-def test_too_many_materials_are_rejected():
-    sim = Simulation(gpu_id=0)
+def test_too_many_materials_are_rejected(backend):
+    sim = Simulation(backend=backend)
     with pytest.raises(ValueError, match="materials"):
         sim.materials = _materials(17)
 
 
-def test_mesh_needs_two_materials():
+def test_mesh_needs_two_materials(backend):
     with pytest.raises(ValueError, match="material"):
-        _box_simulation(_materials(1)).run()
+        _box_simulation(backend, _materials(1)).run()
 
 
 @pytest.mark.parametrize("material_id, count", [(2, 2), (5, 2), (16, 16)])
-def test_instance_material_id_out_of_range_is_rejected(material_id, count):
+def test_instance_material_id_out_of_range_is_rejected(backend, material_id, count):
     with pytest.raises(ValueError, match="material"):
-        _box_simulation(_materials(count), _instances(material_id)).run()
+        _box_simulation(backend, _materials(count), _instances(material_id)).run()
 
 
-def test_last_material_id_is_supported():
-    sim = _box_simulation(_materials(16), _instances(15))
+def test_last_material_id_is_supported(backend):
+    if backend == Backend.EMBREE:
+        pytest.skip("the Embree backend does not support instances yet")
+    sim = _box_simulation(backend, _materials(16), _instances(15))
     sim.run()
     assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[0] == 2
 
 
-def test_geometry_shared_between_simulations():
+def test_geometry_shared_between_simulations(backend):
     box = trimesh.creation.box(extents=[2, 2, 2])
     geometry = MeshGeometry(box.vertices, box.faces)
-    a = _box_simulation(_materials(2), geometry)
-    b = _box_simulation(_materials(2), geometry)
+    a = _box_simulation(backend, _materials(2), geometry)
+    b = _box_simulation(backend, _materials(2), geometry)
 
     counts = []
     for sim in (a, b, a, b):
@@ -144,10 +146,10 @@ def test_geometry_shared_between_simulations():
         assert (result == counts[0]).all()
 
 
-def test_simulation_survives_destruction_of_another():
-    first = _box_simulation(_materials(2))
+def test_simulation_survives_destruction_of_another(backend):
+    first = _box_simulation(backend, _materials(2))
     first.run()
-    second = _box_simulation(_materials(2))
+    second = _box_simulation(backend, _materials(2))
     second.run()
     del second
     before = first.get_output_buffer(OutputType.SCATTERING_COUNT).copy()
@@ -161,16 +163,16 @@ def test_simulation_survives_destruction_of_another():
 GENERATORS = [RandomNumberGenerator.PCG32, RandomNumberGenerator.MRG32K3A]
 
 
-def _slab_beam_simulation(material, rays, generator, seed=42):
+def _slab_beam_simulation(backend, material, rays, generator, seed=42):
     """A beam falling straight onto a large slab whose top surface is z = 0."""
-    sim = Simulation(gpu_id=0)
+    sim = Simulation(backend=backend)
     slab = trimesh.creation.box(extents=[10, 10, 1],
                                 transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
     sim.geometry = MeshGeometry(slab.vertices, slab.faces)
     sim.wavelength_um = 1.0
     sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), material]
     sim.seed = seed
-    sim.random_number_generator = generator
+    _set_generator(sim, generator)
     sim.ray_generator = ParallelRayGenerator(number_of_rays=rays, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=3)
     sim.outputs = [OutputType.SCATTERING_COUNT, OutputType.LAST_DIRECTION, OutputType.RAY_STATE]
     sim.run()
@@ -178,27 +180,34 @@ def _slab_beam_simulation(material, rays, generator, seed=42):
             sim.get_output_buffer(OutputType.RAY_STATE))
 
 
+def _set_generator(sim, generator):
+    try:
+        sim.random_number_generator = generator
+    except ValueError:
+        pytest.skip(f"{generator} is not available on this backend")
+
+
 def _assert_fraction(count, total, expected, what):
     sigma = np.sqrt(expected * (1 - expected) / total)
     assert abs(count / total - expected) < 5 * sigma, f"{what}: {count / total:.5f}, expected {expected:.5f} +- {sigma:.5f}"
 
 
-def test_pcg32_is_the_default_random_number_generator():
-    assert Simulation(gpu_id=0).random_number_generator == RandomNumberGenerator.PCG32
+def test_pcg32_is_the_default_random_number_generator(backend):
+    assert Simulation(backend=backend).random_number_generator == RandomNumberGenerator.PCG32
 
 
 @pytest.mark.parametrize("generator", GENERATORS)
-def test_normal_incidence_reflectance_matches_fresnel(generator):
+def test_normal_incidence_reflectance_matches_fresnel(backend, generator):
     n = 400000
-    counts, directions, _ = _slab_beam_simulation(Material(MaterialType.REFRACTIVE, 1.5 + 0j), n, generator)
+    counts, directions, _ = _slab_beam_simulation(backend, Material(MaterialType.REFRACTIVE, 1.5 + 0j), n, generator)
     reflected_at_top = (counts == 1) & (directions[:, 2] > 0)
     _assert_fraction(int(reflected_at_top.sum()), n, ((1.5 - 1) / (1.5 + 1)) ** 2, "reflectance")
 
 
 @pytest.mark.parametrize("generator", GENERATORS)
-def test_diffuse_surface_absorbs_one_minus_albedo(generator):
+def test_diffuse_surface_absorbs_one_minus_albedo(backend, generator):
     n = 400000
-    counts, directions, state = _slab_beam_simulation(Material(MaterialType.DIFFUSE, 0.3), n, generator)
+    counts, directions, state = _slab_beam_simulation(backend, Material(MaterialType.DIFFUSE, 0.3), n, generator)
     _assert_fraction(int((state == 1).sum()), n, 0.7, "absorbed fraction")
 
     # a Lambertian surface sends light out with a mean cosine of 2/3
@@ -208,14 +217,14 @@ def test_diffuse_surface_absorbs_one_minus_albedo(generator):
 
 
 @pytest.mark.parametrize("generator", GENERATORS)
-def test_isotropic_source_is_uniform_on_the_sphere(generator):
+def test_isotropic_source_is_uniform_on_the_sphere(backend, generator):
     n = 300000
-    sim = Simulation(gpu_id=0)
+    sim = Simulation(backend=backend)
     sphere = trimesh.creation.icosphere(subdivisions=1, radius=1.0)
     sim.geometry = MeshGeometry(sphere.vertices, sphere.faces)
     sim.wavelength_um = 1.0
     sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.3 + 0j)]
-    sim.random_number_generator = generator
+    _set_generator(sim, generator)
     sim.ray_generator = IsotropicRayGenerator(number_of_rays=n, center=(0, 0, 0), source_radius=10, offset_radius=1)
     sim.outputs = [OutputType.SOURCE_DIRECTION]
     sim.run()
@@ -227,20 +236,22 @@ def test_isotropic_source_is_uniform_on_the_sphere(generator):
 
 
 @pytest.mark.parametrize("generator", GENERATORS)
-def test_same_seed_gives_the_same_rays_and_another_seed_different_ones(generator):
+def test_same_seed_gives_the_same_rays_and_another_seed_different_ones(backend, generator):
     glass = Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)
-    first = _slab_beam_simulation(glass, 20000, generator, seed=5)
-    again = _slab_beam_simulation(glass, 20000, generator, seed=5)
-    other = _slab_beam_simulation(glass, 20000, generator, seed=6)
+    first = _slab_beam_simulation(backend, glass, 20000, generator, seed=5)
+    again = _slab_beam_simulation(backend, glass, 20000, generator, seed=5)
+    other = _slab_beam_simulation(backend, glass, 20000, generator, seed=6)
 
     assert (first[1] == again[1]).all()
     assert not (first[1] == other[1]).all()
 
 
 @pytest.mark.parametrize("generator", GENERATORS)
-def test_pipelines_pass_optix_validation_with_each_generator(generator):
+def test_pipelines_pass_optix_validation_with_each_generator(backend, generator):
+    if backend != Backend.OPTIX:
+        pytest.skip("validation mode is an OptiX feature")
     # Validation mode checks every payload access against the declared payload size
-    sim = Simulation(gpu_id=0, enable_validation_mode=True)
+    sim = Simulation(backend=backend, enable_validation_mode=True)
     sphere = trimesh.creation.icosphere(subdivisions=2, radius=2.0)
     sim.geometry = MeshGeometry(sphere.vertices, sphere.faces)
     sim.materials = _materials(2)
@@ -252,9 +263,11 @@ def test_pipelines_pass_optix_validation_with_each_generator(generator):
     assert sim.calculate_volume_fraction([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5], 1000) == 1.0
 
 
-def test_the_generator_can_be_changed_between_runs():
+def test_the_generator_can_be_changed_between_runs(backend):
+    if backend != Backend.OPTIX:
+        pytest.skip("only OptiX has a second generator")
     glass = Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)
-    sim = _box_simulation(_materials(2))
+    sim = _box_simulation(backend, _materials(2))
     sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), glass]
     sim.ray_generator = ParallelRayGenerator(number_of_rays=20000, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.9)
     sim.outputs = [OutputType.LAST_DIRECTION]
@@ -269,8 +282,8 @@ def test_the_generator_can_be_changed_between_runs():
     assert (results[0] == results[2]).all()      # switching back reproduces the first run
 
 
-def test_circular_polarization_at_normal():
-    sim = Simulation(gpu_id=0)
+def test_circular_polarization_at_normal(backend):
+    sim = Simulation(backend=backend)
     angle_deg = 0
     angle_rad = np.radians(angle_deg)
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
@@ -321,8 +334,8 @@ def test_circular_polarization_at_normal():
                        1, 0, 0, -1], atol=1e-2), "Stokes vector not as expected on average"
 
 
-def test_linear_polarization_at_normal():
-    sim = Simulation(gpu_id=0)
+def test_linear_polarization_at_normal(backend):
+    sim = Simulation(backend=backend)
     angle_deg = 0
     angle_rad = np.radians(angle_deg)
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
@@ -372,8 +385,8 @@ def test_linear_polarization_at_normal():
                        1, 1, 0, 0], atol=1e-2), "Stokes vector not as expected on average"
 
 
-def test_linear_u_polarization_at_normal():
-    sim = Simulation(gpu_id=0)
+def test_linear_u_polarization_at_normal(backend):
+    sim = Simulation(backend=backend)
     angle_deg = 0
     angle_rad = np.radians(angle_deg)
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
@@ -424,8 +437,8 @@ def test_linear_u_polarization_at_normal():
 
 
 
-def test_ref_brewster_p_pol():
-    sim = Simulation(gpu_id=0)
+def test_ref_brewster_p_pol(backend):
+    sim = Simulation(backend=backend)
     # brewster angle for air to glass
     brewster_angle = np.arctan(1.5)
 
@@ -464,7 +477,9 @@ def test_ref_brewster_p_pol():
     
     assert escape_up.sum() == 0, "No rays should be reflected at brewster angle"
 
-def test_layered_absorption():
+def test_layered_absorption(backend):
+    if backend == Backend.EMBREE:
+        pytest.skip("the Embree backend does not support instances yet")
     # create a mesh representation af a sphere
     slab_1 = trimesh.creation.box(extents=(8, 8, 5), transform=trimesh.transformations.translation_matrix((0, 0, 2.5)))
     slab_2 = trimesh.creation.box(extents=(9, 9, 3), transform=trimesh.transformations.translation_matrix((0, 0, 1.5)))
@@ -483,7 +498,7 @@ def test_layered_absorption():
     material_ids = [2, 1, 3]
     particle_ids = [0, 1, 2]
 
-    sim = Simulation(gpu_id=0)
+    sim = Simulation(backend=backend)
     sim.geometry = InstanceGeometry([slab_1_mesh, slab_2_mesh, slab_3_mesh], transforms, particle_ids, material_ids)
 
     sim.wavelength_um = 0.55  # green light
@@ -558,3 +573,24 @@ def test_layered_absorption():
     assert np.isclose(a_2_mean, a_2_expected, atol=1e-3)
     assert np.isclose(a_3_mean, a_3_expected, atol=1e-3)
     assert np.isclose(a_4_mean, a_4_expected, atol=1e-3)
+
+def test_a_build_has_a_backend_and_creates_it_by_default():
+    assert available_backends()
+    sim = Simulation()
+    assert sim.random_number_generator == RandomNumberGenerator.PCG32
+
+
+def test_embree_only_supports_pcg32():
+    if Backend.EMBREE not in available_backends():
+        pytest.skip("this build has no Embree backend")
+    sim = Simulation(backend=Backend.EMBREE)
+    with pytest.raises(ValueError, match="random number generator"):
+        sim.random_number_generator = RandomNumberGenerator.MRG32K3A
+
+
+def test_a_backend_that_is_not_built_is_rejected():
+    missing = [b for b in (Backend.OPTIX, Backend.EMBREE) if b not in available_backends()]
+    if not missing:
+        pytest.skip("this build has every backend")
+    with pytest.raises(RuntimeError, match="does not contain"):
+        Simulation(backend=missing[0])

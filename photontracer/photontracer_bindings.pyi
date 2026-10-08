@@ -92,6 +92,10 @@ __all__ = [
     "CameraRayGenerator",
     "Simulation",
     "is_cuda_available",
+    "available_backends",
+    "Backend",
+    "OPTIX",
+    "EMBREE",
     "RandomNumberGenerator",
     "PCG32",
     "MRG32K3A",
@@ -214,6 +218,35 @@ class MaterialType:
     def __int__(self) -> int: ...
 
     def __repr__(self) -> str: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def value(self) -> int: ...
+
+
+class Backend:
+    """Enum selecting where a :class:`Simulation` traces its rays.
+
+    Pass one of these as ``backend`` to :class:`Simulation`.
+
+    Members:
+
+    * ``OPTIX`` – NVIDIA GPU with OptiX.
+    * ``EMBREE`` – CPU with Embree and TBB. Supports only the ``PCG32``
+      generator and meshes so far.
+    """
+
+    OPTIX: Backend
+    EMBREE: Backend
+    __members__: dict[str, Backend]
+
+    def __eq__(self, other: typing.Any) -> bool: ...
+
+    def __hash__(self) -> int: ...
+
+    def __init__(self, value: int) -> None: ...
 
     @property
     def name(self) -> str: ...
@@ -955,19 +988,24 @@ class CameraRayGenerator(IRayGenerator):
 
 
 class Simulation:
-    """Main entry point for GPU ray tracing simulations.
+    """Main entry point for ray tracing simulations.
 
-    A ``Simulation`` wraps an NVIDIA OptiX device context and manages the full
-    rendering pipeline: geometry acceleration structures, ray generation, CUDA
-    kernel launch, and output buffer retrieval.
+    A ``Simulation`` wraps a ray tracing backend and manages the full
+    pipeline: geometry acceleration structures, ray generation, launch, and
+    output buffer retrieval.
 
     Args:
         gpu_id: Zero-based index of the CUDA device to use (default ``0``).
+            OptiX only.
         optix_logging_level: Verbosity of OptiX internal messages, ``0``
-            (silent) to ``4`` (verbose).  Default ``1``.
+            (silent) to ``4`` (verbose).  Default ``1``.  OptiX only.
         enable_validation_mode: Enable OptiX validation mode for additional
             runtime checks during development.  Significantly slower; leave
-            ``False`` in production.
+            ``False`` in production.  OptiX only.
+        backend: :class:`Backend` to trace with. By default the first of
+            :func:`available_backends`, which is OptiX if the build has it.
+        cpu_threads: Number of threads of the Embree backend; ``0`` (default)
+            uses all cores.
 
     Typical usage::
 
@@ -989,6 +1027,8 @@ class Simulation:
         gpu_id: int = 0,
         optix_logging_level: int = 1,
         enable_validation_mode: bool = False,
+        backend: typing.Optional[Backend] = None,
+        cpu_threads: int = 0,
     ) -> None: ...
 
     def run(self) -> None:
@@ -1284,6 +1324,11 @@ class Simulation:
     def outputs(self, value: typing.Sequence[OutputType]) -> None: ...
 
 
+def available_backends() -> list[Backend]:
+    """Return the backends this build contains, the default one first."""
+    ...
+
+
 def is_cuda_available() -> bool:
     """Return ``True`` if at least one CUDA-capable GPU is detected.
 
@@ -1302,6 +1347,9 @@ DIFFUSE: MaterialType
 REFRACTIVE: MaterialType
 REFLECTIVE: MaterialType
 VOLUME_SCATTERING: MaterialType
+
+OPTIX: Backend
+EMBREE: Backend
 
 PCG32: RandomNumberGenerator
 MRG32K3A: RandomNumberGenerator
