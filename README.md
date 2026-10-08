@@ -34,7 +34,7 @@ The Embree backend runs on any x86-64 CPU and needs no GPU.
 The following build tools are required to compile photontracer:
 
 - C++ compiler (GCC 11+ on Linux, MSVC on Windows)
-- Python 3 with development headers
+- Python 3.9 or newer with development headers
 - CMake (>=3.27)
 - NVIDIA CUDA toolkit (>=12.4), for the OptiX backend
 - Intel oneTBB (>=2021), for the Embree backend
@@ -105,6 +105,10 @@ a run with the same generator (and the same build).
 ## Usage
 
 Refer to the example jupyter notebooks in `examples/` and the docstrings of the Python objects.
+
+### Output messages
+
+The library is quiet by default. To see which device is used and how long compiling and launching take, call `photontracer.set_verbose(True)`.
 
 ### Tracing single rays
 

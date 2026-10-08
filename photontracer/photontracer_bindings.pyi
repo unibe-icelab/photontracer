@@ -91,6 +91,8 @@ __all__ = [
     "Simulation",
     "is_cuda_available",
     "available_backends",
+    "set_verbose",
+    "is_verbose",
     "TraceEvent",
     "Backend",
     "OPTIX",
@@ -1380,6 +1382,16 @@ class Simulation:
 
     @outputs.setter
     def outputs(self, value: typing.Sequence[OutputType]) -> None: ...
+
+
+def set_verbose(verbose: bool) -> None:
+    """Print progress messages (device in use, compile and launch times). Off by default."""
+    ...
+
+
+def is_verbose() -> bool:
+    """Return whether progress messages are printed."""
+    ...
 
 
 def available_backends() -> list[Backend]:

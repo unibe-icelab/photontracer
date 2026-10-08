@@ -13,6 +13,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: optix
+          max-size: 1G
       - uses: conda-incubator/setup-miniconda@v3
         with:
           environment-file: environment_linux.yml
@@ -25,19 +29,33 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CUDA_ARCHITECTURES=86
           -DPHOTONTRACER_BUILD_TESTS=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
       - name: Build
         shell: bash -el {0}
         run: cmake --build build
+      - name: Cache statistics
+        if: always()
+        run: ccache --show-stats
   cpu-tests:
-    name: CPU build and tests (no CUDA)
+    name: CPU build and tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: cpu
+          max-size: 500M
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -48,7 +66,12 @@ jobs:
           pip install -v .
           -C cmake.define.PHOTONTRACER_BUILD_OPTIX=OFF
           -C cmake.define.PHOTONTRACER_BUILD_TESTS=ON
+          -C cmake.define.CMAKE_C_COMPILER_LAUNCHER=ccache
+          -C cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: C++ tests
         run: ctest --test-dir build --output-on-failure
       - name: Python tests
         run: pytest photontracer/test
+      - name: Cache statistics
+        if: always()
+        run: ccache --show-stats
