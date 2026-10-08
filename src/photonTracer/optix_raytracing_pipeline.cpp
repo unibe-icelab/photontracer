@@ -100,7 +100,13 @@ void OptixRayTracingPipeline::launch(InputParameters &params, uint3 launchDim)
         cudaMemcpyHostToDevice));
 
     long long t0 = currentTimeMs();
-    OTK_ERROR_CHECK(optixLaunch(pipeline_, stream, dParam, sizeof(InputParameters), &sbt_, launchDim.x, launchDim.y, launchDim.z));
+    // Only a launch with traced rays runs the raygen program that records them
+    OptixShaderBindingTable sbt = sbt_;
+    if (params.trace.rayCount > 0)
+    {
+        sbt.raygenRecord = tracedRaygenRecord_;
+    }
+    OTK_ERROR_CHECK(optixLaunch(pipeline_, stream, dParam, sizeof(InputParameters), &sbt, launchDim.x, launchDim.y, launchDim.z));
     OTK_CUDA_SYNC_CHECK();
     long long t1 = currentTimeMs();
     std::cout << "Finished raytracing in " << t1 - t0 << " ms" << std::endl;
@@ -129,6 +135,11 @@ OptixRayTracingPipeline::~OptixRayTracingPipeline()
     {
         OTK_ERROR_CHECK(optixProgramGroupDestroy(raygenProgGroup_));
         raygenProgGroup_ = nullptr;
+    }
+    if (tracedRaygenProgGroup_)
+    {
+        OTK_ERROR_CHECK(optixProgramGroupDestroy(tracedRaygenProgGroup_));
+        tracedRaygenProgGroup_ = nullptr;
     }
     if (missProgGroup_)
     {
@@ -208,6 +219,16 @@ void OptixRayTracingPipeline::createProgramGroups(const OptixDeviceContext conte
             LOG, &LOG_SIZE,
             &raygenProgGroup_));
 
+        OptixProgramGroupDesc tracedRaygenProgGroupDesc = raygenProgGroupDesc;
+        tracedRaygenProgGroupDesc.raygen.entryFunctionName = "__raygen__rg_traced";
+        OTK_ERROR_CHECK_LOG(optixProgramGroupCreate(
+            context,
+            &tracedRaygenProgGroupDesc,
+            1, // num program groups
+            &programGroupOptions,
+            LOG, &LOG_SIZE,
+            &tracedRaygenProgGroup_));
+
         OptixProgramGroupDesc missProgGroupDesc = {};
         missProgGroupDesc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
         missProgGroupDesc.miss.module = module_;
@@ -246,7 +267,7 @@ void OptixRayTracingPipeline::linkPipeline(const OptixDeviceContext context)
         throw std::runtime_error("Program Groups not created. Call createProgramGroups() first.");
     }
     {
-        OptixProgramGroup programGroups[] = {raygenProgGroup_, missProgGroup_, hitgroupProgGroup_};
+        OptixProgramGroup programGroups[] = {raygenProgGroup_, tracedRaygenProgGroup_, missProgGroup_, hitgroupProgGroup_};
 
         const uint32_t cMaxTraceDepth = 1; // no recursion, we use iterative path tracing
 
@@ -295,6 +316,15 @@ void OptixRayTracingPipeline::setupShaderBindingTable(const std::vector<Material
         raygenRecordSize,
         cudaMemcpyHostToDevice));
 
+    CUdeviceptr tracedRaygenRecord;
+    OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&tracedRaygenRecord), raygenRecordSize));
+    OTK_ERROR_CHECK(optixSbtRecordPackHeader(tracedRaygenProgGroup_, &rgSbt));
+    OTK_ERROR_CHECK(cudaMemcpy(
+        reinterpret_cast<void *>(tracedRaygenRecord),
+        &rgSbt,
+        raygenRecordSize,
+        cudaMemcpyHostToDevice));
+
     CUdeviceptr missRecord;
     size_t missRecordSize = sizeof(MissSbtRecord);
     OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&missRecord), missRecordSize));
@@ -326,6 +356,7 @@ void OptixRayTracingPipeline::setupShaderBindingTable(const std::vector<Material
         cudaMemcpyHostToDevice));
 
     sbt_.raygenRecord = raygenRecord;
+    tracedRaygenRecord_ = tracedRaygenRecord;
     sbt_.missRecordBase = missRecord;
     sbt_.missRecordStrideInBytes = sizeof(MissSbtRecord);
     sbt_.missRecordCount = 1;
@@ -341,6 +372,11 @@ void OptixRayTracingPipeline::cleanupShaderBindingTable()
     if (sbt_.raygenRecord)
     {
         OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(sbt_.raygenRecord)));
+    }
+    if (tracedRaygenRecord_)
+    {
+        OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(tracedRaygenRecord_)));
+        tracedRaygenRecord_ = 0;
     }
     if (sbt_.missRecordBase)
     {

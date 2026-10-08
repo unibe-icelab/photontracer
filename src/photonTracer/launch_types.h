@@ -64,9 +64,7 @@ enum class OutputType
     SOURCE_POSITION = 10,             // float3: initial ray position
     SCATTERING_ANGLE = 11,            // float: angle between source direction and last direction
     Q_MINUS_AXIS_IN = 12,             // float3: Q- axis for the Stokes vector
-    LOGS = 13,                        // Logs or debug information
-    LOG_OFFSETS = 14,                 // Offsets for logs
-    DIRECTION_HISTOGRAM_HEALPIX = 15, // uint32_t: histogram of scattered directions binned via HEALPix
+    DIRECTION_HISTOGRAM_HEALPIX = 13, // uint32_t: histogram of scattered directions binned via HEALPix
 
     OUTPUT_TYPE_COUNT
 };
@@ -86,12 +84,8 @@ enum OutputFlags : uint32_t
     OUT_SOURCE_POSITION = 1u << static_cast<uint32_t>(OutputType::SOURCE_POSITION),
     OUT_SCATTERING_ANGLE = 1u << static_cast<uint32_t>(OutputType::SCATTERING_ANGLE),
     OUT_Q_MINUS_AXIS_IN = 1u << static_cast<uint32_t>(OutputType::Q_MINUS_AXIS_IN),
-    OUT_LOGS = 1u << static_cast<uint32_t>(OutputType::LOGS),
-    OUT_LOG_OFFSETS = 1u << static_cast<uint32_t>(OutputType::LOG_OFFSETS),
     OUT_DIRECTION_HISTOGRAM_HEALPIX = 1u << static_cast<uint32_t>(OutputType::DIRECTION_HISTOGRAM_HEALPIX),
 };
-
-constexpr uint32_t LOG_BYTES_PER_RAY = 1u << 20;
 
 struct DeviceOutputBuffers
 {
@@ -108,7 +102,50 @@ struct DeviceOutputBuffers
     float3 *sourcePosition;              // Initial ray position
     float *scatteringAngle;              // Angle between source direction and last direction
     float3 *qMinusAxisIn;                // Q- axis for the Stokes vector of the source
-    char *logs;                          // Logs or debug information
-    uint32_t *logOffsets;                // Offsets for logs
     uint32_t *directionHistogramHealpix; // Histogram of miss directions (HEALPix bins)
+};
+
+/// Index of a launch point in the output buffers
+PT_INLINE PT_HD uint32_t linearizeLaunchIndex(uint3 index, uint3 dimensions)
+{
+    return index.x + index.y * dimensions.x + index.z * dimensions.x * dimensions.y;
+}
+
+constexpr uint32_t MAX_TRACED_RAYS = 256;
+
+enum TraceEvent : uint32_t
+{
+    TRACE_INTERACTION,    ///< reflected, refracted or scattered, the ray goes on
+    TRACE_ESCAPED,        ///< the ray left the scene
+    TRACE_ABSORBED,       ///< the ray was absorbed
+    TRACE_MAX_SCATTERING, ///< the ray reached the maximum scattering count
+    TRACE_ERROR,          ///< the ray ended on an error
+};
+
+/// One step of a traced ray: from a start to the next interaction. Only 4-byte members, so the
+/// layout is the same everywhere and numpy can read it.
+struct TraceRecord
+{
+    uint32_t ray;
+    uint32_t step;
+    uint32_t event;
+    uint32_t mediumIn;
+    uint32_t mediumOut;
+    float originIn[3];
+    float directionIn[3];
+    float originOut[3]; ///< where the ray continues, just off the surface
+    float directionOut[3];
+    float stokes[4];
+    float opticalPathLength; ///< of the whole ray so far
+};
+static_assert(sizeof(TraceRecord) == 22 * sizeof(float), "TraceRecord must not have padding");
+
+/// The rays to trace, sorted, and the buffers for their steps
+struct TraceParams
+{
+    uint32_t rayCount;
+    uint32_t maxSteps;
+    uint32_t rays[MAX_TRACED_RAYS];
+    TraceRecord *records; ///< [rayCount * maxSteps]
+    uint32_t *stepCounts; ///< [rayCount], all steps including those beyond maxSteps
 };

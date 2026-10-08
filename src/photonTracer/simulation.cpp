@@ -4,6 +4,7 @@
 // Portions of this code were derived from NVIDIA OptiX sample code.
 // See THIRD_PARTY_NOTICES.md for full license text.
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <limits>
@@ -220,6 +221,37 @@ bool Simulation::getUseComplexFresnel() const
     return useComplexFresnel_;
 }
 
+void Simulation::setTraceRays(std::vector<uint32_t> rays)
+{
+    std::sort(rays.begin(), rays.end());
+    rays.erase(std::unique(rays.begin(), rays.end()), rays.end());
+    if (rays.size() > MAX_TRACED_RAYS)
+    {
+        throw std::invalid_argument("At most " + std::to_string(MAX_TRACED_RAYS) + " rays can be traced, got " + std::to_string(rays.size()));
+    }
+    traceRays_ = std::move(rays);
+    traceBuffers_.reset();
+}
+
+void Simulation::setMaxTraceSteps(uint32_t maxSteps)
+{
+    if (maxSteps == 0)
+    {
+        throw std::invalid_argument("max_trace_steps must be greater than zero");
+    }
+    maxTraceSteps_ = maxSteps;
+    traceBuffers_.reset();
+}
+
+std::vector<TraceRecord> Simulation::getTrace() const
+{
+    if (!traceBuffers_)
+    {
+        throw std::runtime_error("No rays were traced. Set trace_rays and call run() first.");
+    }
+    return traceBuffers_->read();
+}
+
 void Simulation::setDirectionHealpixNside(uint32_t nside)
 {
     // nside must be a power of 2
@@ -313,6 +345,7 @@ void Simulation::allocateOutputBuffers(const uint3 launchShape)
 void Simulation::freeOutputBuffers()
 {
     outputBuffers_.reset();
+    traceBuffers_.reset();
 }
 
 void Simulation::freeDeviceMemory()
@@ -394,6 +427,25 @@ void Simulation::run()
         outputBuffers_->clearZeroInitializedBuffers();
     }
 
+    const uint64_t rayCount = static_cast<uint64_t>(launchShape.x) * launchShape.y * launchShape.z;
+    if (!traceRays_.empty() && traceRays_.back() >= rayCount)
+    {
+        throw std::invalid_argument("Traced ray " + std::to_string(traceRays_.back()) + " does not exist; this run has " + std::to_string(rayCount) + " rays");
+    }
+    TraceParams trace = {};
+    if (traceRays_.empty())
+    {
+        traceBuffers_.reset();
+    }
+    else
+    {
+        if (!traceBuffers_)
+        {
+            traceBuffers_ = std::make_unique<TraceBuffers>(*backend_, traceRays_, maxTraceSteps_);
+        }
+        trace = traceBuffers_->prepare();
+    }
+
     InputParameters params;
     params.stokesVector = stokesVector_;
     params.qMinusAxisSeed = qMinusAxisSeed_;
@@ -408,6 +460,7 @@ void Simulation::run()
     params.healpixNside = healpixMissNside_;
     params.healpixBinCount = healpixHistogramBins_;
     params.useComplexFresnel = useComplexFresnel_;
+    params.trace = trace;
 
     // Launch the ray tracing pipeline
     backend_->launch(params, *geometry_, launchShape);

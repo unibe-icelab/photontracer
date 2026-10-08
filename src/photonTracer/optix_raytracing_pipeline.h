@@ -27,10 +27,12 @@ private:
     OptixModule module_ = nullptr;
 
     OptixProgramGroup raygenProgGroup_ = nullptr;
+    OptixProgramGroup tracedRaygenProgGroup_ = nullptr; ///< the same raygen program with the recording of traced rays
     OptixProgramGroup missProgGroup_ = nullptr;
     OptixProgramGroup hitgroupProgGroup_ = nullptr;
 
     CUdeviceptr raygenRecord_ = 0;
+    CUdeviceptr tracedRaygenRecord_ = 0;
     CUdeviceptr missRecord_ = 0;
     CUdeviceptr hitgroupRecord_ = 0;
 

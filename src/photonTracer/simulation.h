@@ -10,6 +10,7 @@
 #include "i_geometry.h"
 #include "ray_generator.h"
 #include "i_raytracing_backend.h"
+#include "trace_buffers.h"
 #include "raytracing_output.h"
 #include "output_buffers.h"
 
@@ -160,6 +161,19 @@ public:
      */
     bool getUseComplexFresnel() const;
 
+    /// Rays whose steps are recorded, by index in the output buffers; at most MAX_TRACED_RAYS
+    void setTraceRays(std::vector<uint32_t> rays);
+
+    const std::vector<uint32_t> &getTraceRays() const { return traceRays_; }
+
+    /// Steps recorded per traced ray; later steps are counted but not stored
+    void setMaxTraceSteps(uint32_t maxSteps);
+
+    uint32_t getMaxTraceSteps() const { return maxTraceSteps_; }
+
+    /// The steps of the traced rays in the last run, ordered by ray and step
+    std::vector<TraceRecord> getTrace() const;
+
     void setDirectionHealpixNside(uint32_t nside);
 
     uint32_t getDirectionHealpixNside() const { return healpixMissNside_; }
@@ -226,4 +240,7 @@ private:
 
     std::shared_ptr<RayTracingOutput> rayTracingResult_;
     std::unique_ptr<OutputBuffers> outputBuffers_;
+    std::vector<uint32_t> traceRays_;
+    uint32_t maxTraceSteps_ = 1000;
+    std::unique_ptr<TraceBuffers> traceBuffers_;
 };

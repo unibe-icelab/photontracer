@@ -13,7 +13,6 @@
 
 #include <OptiXToolkit/ShaderUtil/vec_math.h>
 #include <OptiXToolkit/ShaderUtil/SelfIntersectionAvoidance.h>
-#include "logging.cuh"
 #include "light_scattering.h"
 #include "material_hit.h"
 #include "ray_generation.h"
@@ -161,13 +160,15 @@ static __forceinline__ __device__ void traceDensity(
     rayData.done = donePayload;
 }
 
-extern "C" __global__ void __raygen__rg()
+// With Trace the steps of the rays in params.trace are recorded; the plain version has no extra code
+template <bool Trace>
+static __forceinline__ __device__ void raygenLight()
 {
     // Lookup our location within the launch grid
     const uint3 idx3 = optixGetLaunchIndex();
     const uint3 launchDims = optixGetLaunchDimensions();
 
-    uint32_t idx = ptLinearizeLaunchIndex(idx3, launchDims);
+    uint32_t idx = linearizeLaunchIndex(idx3, launchDims);
 
     RandState randState = randInit(params.initSeed, idx);
     auto nextSample = [&randState]() { return randNext(randState); };
@@ -188,25 +189,44 @@ extern "C" __global__ void __raygen__rg()
     prd.randState = randState;
 
     uint32_t scatteringCount = 0;
-
-    DBG_LOG_INT("Ray index", idx);
+    int traceSlot = -1;
+    if constexpr (Trace)
+    {
+        traceSlot = findTraceSlot(params.trace, idx);
+    }
 
     for (;;)
     {
-        DBG_LOG_TEXT("____Start new ray____");
-        DBG_LOG_INT("Scattering count", scatteringCount);
-        DBG_LOG_INT("Done", prd.state.done);
-        DBG_LOG_FLOAT3("Origin", prd.origin);
-        DBG_LOG_FLOAT3("Direction", prd.direction);
-        DBG_LOG_INT("Medium history size", prd.state.currentMediumHistorySize);
+        if constexpr (Trace)
+        {
+            if (traceSlot >= 0)
+            {
+                recordTraceStart(params.trace, traceSlot, idx, scatteringCount, prd);
+            }
+        }
+
         if (params.maxScatteringCount > 0 && scatteringCount >= params.maxScatteringCount)
         {
-            DBG_LOG_INT("Max scatteringCount reached", params.maxScatteringCount);
             prd.state.absorbed = 2;
+            if constexpr (Trace)
+            {
+                if (traceSlot >= 0)
+                {
+                    recordTraceEnd(params.trace, traceSlot, scatteringCount, prd, TRACE_MAX_SCATTERING);
+                }
+            }
             break;
         }
 
         traceRay(params.handle, prd, 0.0f, 1e16f);
+
+        if constexpr (Trace)
+        {
+            if (traceSlot >= 0)
+            {
+                recordTraceEnd(params.trace, traceSlot, scatteringCount, prd, traceEventOf(prd.state));
+            }
+        }
 
         if (prd.state.done)
         {
@@ -214,13 +234,20 @@ extern "C" __global__ void __raygen__rg()
         }
         scatteringCount++;
     }
-    DBG_LOG_INT("Done flag", prd.state.done);
-    DBG_LOG_INT("Absorbed state", prd.state.absorbed);
-    DBG_LOG_INT("Final scatteringCount", scatteringCount);
 
     writeMainTraceOutputs(
         params.outputFlags, params.deviceOutputBuffers, idx, prd,
         incidentRayDirection, stokesIn, initialQMinusAxis, scatteringCount);
+}
+
+extern "C" __global__ void __raygen__rg()
+{
+    raygenLight<false>();
+}
+
+extern "C" __global__ void __raygen__rg_traced()
+{
+    raygenLight<true>();
 }
 
 extern "C" __global__ void __raygen__density()
@@ -308,7 +335,6 @@ extern "C" __global__ void __closesthit__ch()
         printf("Error: Unknown geometry type intersected\n");
         return;
     }
-    DBG_LOG_TEXT("Hit triangle primitive");
 
     float3 hitPoint = hit.rayOrigin + hit.maxDistance * hit.rayDirection;
 

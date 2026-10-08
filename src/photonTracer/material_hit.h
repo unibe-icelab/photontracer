@@ -9,34 +9,6 @@
 #include "materials.h"
 #include "ray_context.h"
 
-// Kernel logging; a no-op unless logging.cuh was included first
-#ifndef DBG_LOG_TEXT
-#define DBG_LOG_STRING(label, text) \
-    do                              \
-    {                               \
-    } while (0)
-#define DBG_LOG_INT(label, value) \
-    do                            \
-    {                             \
-    } while (0)
-#define DBG_LOG_BOOL(label, value) \
-    do                             \
-    {                              \
-    } while (0)
-#define DBG_LOG_FLOAT(label, value) \
-    do                              \
-    {                               \
-    } while (0)
-#define DBG_LOG_FLOAT3(label, value) \
-    do                               \
-    {                                \
-    } while (0)
-#define DBG_LOG_TEXT(text) \
-    do                     \
-    {                      \
-    } while (0)
-#endif
-
 // What a backend has to report about the surface a ray hit
 struct HitInfo
 {
@@ -85,14 +57,9 @@ PT_INLINE PT_HD void handleMaterialHit(
 #endif
 
     const Material scatteringMaterial = hgData.materials[instanceId];
-    DBG_LOG_INT("Hit material id", instanceId);
-    DBG_LOG_INT("Hit material type", scatteringMaterial.type);
 
     float3 hitPoint = hit.hitPoint;
 
-    DBG_LOG_FLOAT3("Hit point", hitPoint);
-    DBG_LOG_FLOAT3("Normal", worldNormal);
-    DBG_LOG_BOOL("Front face", isFrontFace);
 
     RayState state = ctx.getState();
 #if !defined(NDEBUG)
@@ -106,7 +73,6 @@ PT_INLINE PT_HD void handleMaterialHit(
     }
 #endif
     MaterialType currentMaterialType = hgData.materials[state.currentMedium].type;
-    DBG_LOG_INT("Current medium", currentMaterialType);
 
     RefractiveIndex currentRefractiveIndex = {1.0f, 0.0f};
     bool didAbsorb = false;
@@ -118,7 +84,6 @@ PT_INLINE PT_HD void handleMaterialHit(
     if (currentMaterialType == REFRACTIVE)
     {
         currentRefractiveIndex = hgData.materials[state.currentMedium].properties.refractive.refractiveIndex;
-        DBG_LOG_TEXT("Current medium is refractive material");
         didAbsorb = calculateAbsorption(
             maxDistance,
             wavelengthUm,
@@ -130,11 +95,8 @@ PT_INLINE PT_HD void handleMaterialHit(
     else if (currentMaterialType == VOLUME_SCATTERING)
     {
         currentRefractiveIndex = hgData.materials[state.currentMedium].properties.volumeScattering.refractiveIndex;
-        DBG_LOG_TEXT("Current medium is volume scattering material");
         float absorptionCoefficient = absorptionCoefficientFromk(currentRefractiveIndex.i, wavelengthUm, lengthScale);
-        DBG_LOG_FLOAT("Absorption coefficient", absorptionCoefficient);
         float scatteingCoefficient = hgData.materials[state.currentMedium].properties.volumeScattering.scatteringCoefficient;
-        DBG_LOG_FLOAT("Scattering coefficient", scatteingCoefficient);
         float extinctionCoefficient = absorptionCoefficient + scatteingCoefficient;
         bool didAbsorbOrScatter = calculateDistance(
             maxDistance,
@@ -145,7 +107,6 @@ PT_INLINE PT_HD void handleMaterialHit(
         if (didAbsorbOrScatter)
         {
             float singleScatteringAlbedo = scatteingCoefficient / extinctionCoefficient;
-            DBG_LOG_FLOAT("Single scattering albedo", singleScatteringAlbedo);
             rndSample = nextSample();
             if (rndSample < singleScatteringAlbedo)
             {
@@ -155,13 +116,10 @@ PT_INLINE PT_HD void handleMaterialHit(
             {
                 didAbsorb = true;
             }
-            DBG_LOG_BOOL("Did scatter", didScatter);
-            DBG_LOG_BOOL("Did absorb", didAbsorb);
         }
     }
     else
     {
-        DBG_LOG_TEXT("Current medium is not absorbing/volume scattering");
         travelledDistance = maxDistance;
     }
 
@@ -178,13 +136,9 @@ PT_INLINE PT_HD void handleMaterialHit(
             state.absorbed = 1;
             state.done = 1;
             ctx.setState(state);
-            DBG_LOG_FLOAT("Absorbed distance", travelledDistance);
-            DBG_LOG_INT("Absorbed medium", state.currentMedium);
         }
         else
         {
-            DBG_LOG_FLOAT("Scattered distance", travelledDistance);
-            DBG_LOG_INT("Scattered medium", state.currentMedium);
 
             float u1 = nextSample();
             float u2 = nextSample();
@@ -199,7 +153,6 @@ PT_INLINE PT_HD void handleMaterialHit(
     }
     else if (scatteringMaterial.type == DIFFUSE)
     {
-        DBG_LOG_FLOAT("Diffuse albedo", scatteringMaterial.properties.diffuse.albedo);
 
         auto albedo = scatteringMaterial.properties.diffuse.albedo;
 
@@ -225,8 +178,6 @@ PT_INLINE PT_HD void handleMaterialHit(
     }
     else if (scatteringMaterial.type == REFLECTIVE)
     {
-        DBG_LOG_FLOAT("Reflectivity", scatteringMaterial.properties.reflective.reflectivity);
-        DBG_LOG_FLOAT("Fuzziness", scatteringMaterial.properties.reflective.fuzziness);
         auto reflectivity = scatteringMaterial.properties.reflective.reflectivity;
         auto fuzziness = scatteringMaterial.properties.reflective.fuzziness;
 
@@ -268,7 +219,6 @@ PT_INLINE PT_HD void handleMaterialHit(
     }
     else
     {
-        DBG_LOG_TEXT("Hit refractive or volume scattering material");
         float4 stokesVector = ctx.getStokesVector();
         float3 qMinusAxis = ctx.getQMinusAxis();
 
@@ -332,10 +282,6 @@ PT_INLINE PT_HD void handleMaterialHit(
         Complexf nA = Complexf(currentRefractiveIndex.r, currentRefractiveIndex.i);
         Complexf nB = Complexf(nextRefractiveIndex.r, nextRefractiveIndex.i);
 
-        DBG_LOG_FLOAT("Current index real", currentRefractiveIndex.r);
-        DBG_LOG_FLOAT("Current index imag", currentRefractiveIndex.i);
-        DBG_LOG_FLOAT("Next index real", nextRefractiveIndex.r);
-        DBG_LOG_FLOAT("Next index imag", nextRefractiveIndex.i);
 
         // material boundary interaction
         rndSample = nextSample();
@@ -348,28 +294,23 @@ PT_INLINE PT_HD void handleMaterialHit(
         {
             isReflected = calculateFresnelInteraction(stokesVector, qMinusAxis, rayDir, worldNormal, nA.real(), nB.real(), rndSample);
         }
-        DBG_LOG_TEXT(isReflected ? "Fresnel: Reflection" : "Fresnel: Transmission");
         if (!isReflected)
         {
             if (isFrontFace)
             {
-                DBG_LOG_INT("Entering medium", instanceId);
                 bool success = ctx.appendMedium(instanceId, state.currentMediumHistorySize);
                 if (!success)
                 {
                     state.numberOfWarnings++;
-                    DBG_LOG_TEXT("Warning: medium history size exceeded limit");
                 }
                 state.currentMedium = instanceId;
             }
             else
             {
-                DBG_LOG_INT("Exiting medium", instanceId);
                 auto found = ctx.removeLastOccurence(instanceId, state.currentMediumHistorySize);
                 if (!found)
                 {
                     state.numberOfWarnings++;
-                    DBG_LOG_TEXT("Warning: medium not found in history");
                 }
                 state.currentMedium = nextMedium;
             }

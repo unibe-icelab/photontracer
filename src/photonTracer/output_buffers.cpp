@@ -87,8 +87,6 @@ DeviceOutputBuffers OutputBuffers::getDeviceOutputBuffers() const
     outputBuffers.sourcePosition = getBuffer<float3>(OutputType::SOURCE_POSITION);
     outputBuffers.scatteringAngle = getBuffer<float>(OutputType::SCATTERING_ANGLE);
     outputBuffers.qMinusAxisIn = getBuffer<float3>(OutputType::Q_MINUS_AXIS_IN);
-    outputBuffers.logs = getBuffer<char>(OutputType::LOGS);
-    outputBuffers.logOffsets = getBuffer<uint32_t>(OutputType::LOG_OFFSETS);
     outputBuffers.directionHistogramHealpix = getBuffer<uint32_t>(OutputType::DIRECTION_HISTOGRAM_HEALPIX);
 
     return outputBuffers;

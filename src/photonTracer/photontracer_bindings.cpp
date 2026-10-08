@@ -4,6 +4,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <vector>
@@ -118,6 +119,13 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .value("EMBREE", BackendType::EMBREE)
         .export_values();
 
+    py::enum_<TraceEvent>(m, "TraceEvent")
+        .value("INTERACTION", TRACE_INTERACTION)
+        .value("ESCAPED", TRACE_ESCAPED)
+        .value("ABSORBED", TRACE_ABSORBED)
+        .value("MAX_SCATTERING", TRACE_MAX_SCATTERING)
+        .value("ERROR", TRACE_ERROR);
+
     py::enum_<LengthUnit>(m, "LengthUnit")
         .value("MICRO_METER", LengthUnit::MICRO_METER)
         .value("MILLI_METER", LengthUnit::MILLI_METER)
@@ -145,8 +153,6 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .value("SOURCE_POSITION", OutputType::SOURCE_POSITION)
         .value("SCATTERING_ANGLE", OutputType::SCATTERING_ANGLE)
         .value("Q_MINUS_AXIS_IN", OutputType::Q_MINUS_AXIS_IN)
-        .value("LOGS", OutputType::LOGS)
-        .value("LOG_OFFSETS", OutputType::LOG_OFFSETS)
         .value("DIRECTION_HISTOGRAM_HEALPIX", OutputType::DIRECTION_HISTOGRAM_HEALPIX)
         .export_values();
 
@@ -719,16 +725,44 @@ PYBIND11_MODULE(photontracer_bindings, m)
                 copyFromDevice(result.mutable_data());
                 return result;
             }
-            case BufferDescriptor::ElementType::String:
-            {
-                py::array_t<char> result(shapeFor(static_cast<py::ssize_t>(LOG_BYTES_PER_RAY)));
-                copyFromDevice(result.mutable_data());
-                return result;
-            }
             default:
                 throw std::runtime_error("Unsupported buffer element type.");
             } }, py::arg("output_type"), "Get the specified output buffer as a numpy array")
 
+        .def_property("trace_rays", &Simulation::getTraceRays, &Simulation::setTraceRays,
+                      "Indices of the rays whose steps are recorded (at most 256). See get_trace().")
+        .def_property("max_trace_steps", &Simulation::getMaxTraceSteps, &Simulation::setMaxTraceSteps,
+                      "Steps recorded per traced ray (default 1000); later steps are not stored.")
+        .def("get_trace", [](Simulation &sim) -> py::array
+             {
+            const std::vector<TraceRecord> steps = sim.getTrace();
+            py::list fields;
+            fields.append(py::make_tuple("ray", "<u4"));
+            fields.append(py::make_tuple("step", "<u4"));
+            fields.append(py::make_tuple("event", "<u4"));
+            fields.append(py::make_tuple("medium_in", "<u4"));
+            fields.append(py::make_tuple("medium_out", "<u4"));
+            fields.append(py::make_tuple("origin_in", "<f4", 3));
+            fields.append(py::make_tuple("direction_in", "<f4", 3));
+            fields.append(py::make_tuple("origin_out", "<f4", 3));
+            fields.append(py::make_tuple("direction_out", "<f4", 3));
+            fields.append(py::make_tuple("stokes", "<f4", 4));
+            fields.append(py::make_tuple("optical_path_length", "<f4"));
+            py::dtype dtype = py::dtype::from_args(fields);
+            if (static_cast<size_t>(dtype.itemsize()) != sizeof(TraceRecord))
+            {
+                throw std::runtime_error("The trace record layout does not match its numpy type");
+            }
+            py::array result(dtype, static_cast<py::ssize_t>(steps.size()));
+            if (!steps.empty())
+            {
+                std::memcpy(result.mutable_data(), steps.data(), steps.size() * sizeof(TraceRecord));
+            }
+            return result; },
+             "Steps of the traced rays in the last run as a structured array, ordered by ray and step.\n"
+             "A step goes from a start to the next interaction: origin_in and direction_in are the ray before it,\n"
+             "origin_out and direction_out after it (the origin is just off the surface that was hit).\n"
+             "event is a TraceEvent. The Stokes vector and optical path length are those after the step.")
         .def_property("geometry", &Simulation::getGeometry, &Simulation::setGeometry, "Get or set the geometry for the simulation.")
         .def_property("materials", &Simulation::getMaterials, &Simulation::setMaterials, "Get or set the materials for the simulation.")
         .def_property("wavelength_um", &Simulation::getWavelengthUm, &Simulation::setWavelengthUm, "Get or set the wavelength in micrometers for the simulation.")
