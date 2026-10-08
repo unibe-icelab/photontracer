@@ -15,14 +15,12 @@
 #include <OptiXToolkit/Error/cudaErrorCheck.h>
 #include <OptiXToolkit/Error/optixErrorCheck.h>
 
-#include "optix_geometry_build.h"
 
 int buildGasFromMesh(
-    const std::vector<float3> &meshVertices,
-    const std::vector<unsigned int> &meshIndices,
+    std::vector<float3> &meshVertices,
+    std::vector<uint32_t> &meshIndices,
     OptixDeviceContext &context,
-    OptixTraversableHandle &gasHandle, CUdeviceptr &dGasOutputBuffer,
-    bool compact)
+    OptixTraversableHandle &gasHandle, CUdeviceptr &dGasOutputBuffer)
 {
 
     uint32_t maxPrimitivesPerGas = 0;
@@ -68,18 +66,7 @@ int buildGasFromMesh(
 
     OptixAccelBuildOptions gasAccelOptions = {};
     gasAccelOptions.buildFlags = OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS;
-    if (compact)
-        gasAccelOptions.buildFlags |= OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
     gasAccelOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
-
-    CUdeviceptr dCompactedSize = 0;
-    OptixAccelEmitDesc compactedSizeProperty = {};
-    if (compact)
-    {
-        OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dCompactedSize), sizeof(size_t)));
-        compactedSizeProperty.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-        compactedSizeProperty.result = dCompactedSize;
-    }
 
     OptixAccelBufferSizes gasBufferSizes;
     OTK_ERROR_CHECK(optixAccelComputeMemoryUsage(
@@ -96,73 +83,11 @@ int buildGasFromMesh(
         context, 0, &gasAccelOptions, &triangleInput, 1,
         dTempBufferGas, gasBufferSizes.tempSizeInBytes,
         dGasOutputBuffer, gasBufferSizes.outputSizeInBytes,
-        &gasHandle, compact ? &compactedSizeProperty : nullptr, compact ? 1 : 0));
-
-    if (compact)
-    {
-        // Copy the GAS into a tighter buffer if compaction saves memory.
-        size_t compactedSize = 0;
-        OTK_ERROR_CHECK(cudaMemcpy(&compactedSize, reinterpret_cast<const void *>(dCompactedSize),
-                                   sizeof(size_t), cudaMemcpyDeviceToHost));
-        OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dCompactedSize)));
-
-        if (compactedSize < gasBufferSizes.outputSizeInBytes)
-        {
-            CUdeviceptr dCompactedBuffer = 0;
-            OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dCompactedBuffer), compactedSize));
-            OTK_ERROR_CHECK(optixAccelCompact(context, 0, gasHandle, dCompactedBuffer, compactedSize, &gasHandle));
-            OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dGasOutputBuffer)));
-            dGasOutputBuffer = dCompactedBuffer;
-        }
-    }
+        &gasHandle, nullptr, 0));
 
     // Free temporary buffers and the mesh input (the GAS now owns the geometry).
     OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dTempBufferGas)));
     OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dVertices)));
     OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dIndices)));
     return 0;
-}
-
-void buildIasFromInstances(
-    const std::vector<OptixInstance> &instances,
-    OptixDeviceContext &context,
-    OptixTraversableHandle &iasHandle, CUdeviceptr &dIasOutputBuffer)
-{
-    const size_t numberOfInstances = instances.size();
-
-    CUdeviceptr dInstanceBuffer = 0;
-    size_t instanceBufferSize = numberOfInstances * sizeof(OptixInstance);
-    OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dInstanceBuffer), instanceBufferSize));
-    OTK_ERROR_CHECK(cudaMemcpy(reinterpret_cast<void *>(dInstanceBuffer),
-                               instances.data(), instanceBufferSize,
-                               cudaMemcpyHostToDevice));
-
-    OptixBuildInput instanceInput = {};
-    instanceInput.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
-    instanceInput.instanceArray.instances = dInstanceBuffer;
-    instanceInput.instanceArray.numInstances = numberOfInstances;
-
-    OptixAccelBuildOptions iasAccelOptions = {};
-    iasAccelOptions.buildFlags = OPTIX_BUILD_FLAG_NONE;
-    iasAccelOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
-
-    OptixAccelBufferSizes iasBufferSizes;
-    OTK_ERROR_CHECK(optixAccelComputeMemoryUsage(
-        context, &iasAccelOptions, &instanceInput, 1, &iasBufferSizes));
-
-    CUdeviceptr dTempBufferIas = 0;
-    OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dTempBufferIas),
-                               iasBufferSizes.tempSizeInBytes));
-
-    OTK_ERROR_CHECK(cudaMalloc(reinterpret_cast<void **>(&dIasOutputBuffer),
-                               iasBufferSizes.outputSizeInBytes));
-
-    OTK_ERROR_CHECK_LOG(optixAccelBuild(
-        context, 0, &iasAccelOptions, &instanceInput, 1,
-        dTempBufferIas, iasBufferSizes.tempSizeInBytes,
-        dIasOutputBuffer, iasBufferSizes.outputSizeInBytes,
-        &iasHandle, nullptr, 0));
-
-    OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dInstanceBuffer)));
-    OTK_ERROR_CHECK(cudaFree(reinterpret_cast<void *>(dTempBufferIas)));
 }

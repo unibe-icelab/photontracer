@@ -6,11 +6,11 @@ authors:
     given-names: Rafael
     orcid: https://orcid.org/0009-0002-0254-9411
 title: "PhotonTracer"
-version: 1.0.2
+version: 1.0.1
 identifiers:
   - type: doi
     value: 10.5281/zenodo.18989228
-date-released: 2026-03-18
+date-released: 2026-03-12
 preferred-citation:
   authors:
     - family-names: Ottersberg

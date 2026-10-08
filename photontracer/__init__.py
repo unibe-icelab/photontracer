@@ -5,13 +5,6 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     from .photontracer_bindings import (
         is_cuda_available,
-        available_backends,
-        Backend,
-        OPTIX,
-        EMBREE,
-        RandomNumberGenerator,
-        PCG32,
-        MRG32K3A,
         GeometryType,
         MESH,
         MESH_INSTANCED,
@@ -53,6 +46,7 @@ try:
         IsotropicRayGenerator,
         CameraRayGenerator,
     )
+    assert is_cuda_available(), "CUDA is not available. Please ensure that CUDA is installed and a compatible GPU is present."
 except ImportError as e:
     error_msg = (
         "Failed to import photontracer\n\n"
@@ -64,13 +58,6 @@ except ImportError as e:
 # Define the export surface for ``from photontracer import *``.
 __all__ = [
     'is_cuda_available',
-    'available_backends',
-    'Backend',
-    'OPTIX',
-    'EMBREE',
-    'RandomNumberGenerator',
-    'PCG32',
-    'MRG32K3A',
     'GeometryType',
     'MESH',
     'MESH_INSTANCED',

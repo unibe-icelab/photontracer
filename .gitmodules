@@ -7,6 +7,3 @@
 [submodule "external/optix"]
 	path = external/optix
 	url = https://github.com/NVIDIA/optix-dev.git
-[submodule "external/embree"]
-	path = external/embree
-	url = https://github.com/RenderKit/embree.git
