@@ -121,8 +121,6 @@ def test_instance_material_id_out_of_range_is_rejected(backend, material_id, cou
 
 
 def test_last_material_id_is_supported(backend):
-    if backend == Backend.EMBREE:
-        pytest.skip("the Embree backend does not support instances yet")
     sim = _box_simulation(backend, _materials(16), _instances(15))
     sim.run()
     assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[0] == 2
@@ -478,8 +476,6 @@ def test_ref_brewster_p_pol(backend):
     assert escape_up.sum() == 0, "No rays should be reflected at brewster angle"
 
 def test_layered_absorption(backend):
-    if backend == Backend.EMBREE:
-        pytest.skip("the Embree backend does not support instances yet")
     # create a mesh representation af a sphere
     slab_1 = trimesh.creation.box(extents=(8, 8, 5), transform=trimesh.transformations.translation_matrix((0, 0, 2.5)))
     slab_2 = trimesh.creation.box(extents=(9, 9, 3), transform=trimesh.transformations.translation_matrix((0, 0, 1.5)))
@@ -594,3 +590,107 @@ def test_a_backend_that_is_not_built_is_rejected():
         pytest.skip("this build has every backend")
     with pytest.raises(RuntimeError, match="does not contain"):
         Simulation(backend=missing[0])
+
+
+def _glass_ball():
+    ball = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+    return MeshGeometry(ball.vertices, ball.faces)
+
+
+def _transform(scale=1.0, shift=(0, 0, 0)):
+    matrix = np.eye(4, dtype=np.float32)[:3]
+    matrix[:, :3] *= scale
+    matrix[:, 3] = shift
+    return matrix
+
+
+def _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10), rays=1000):
+    sim = Simulation(backend=backend)
+    sim.geometry = geometry
+    sim.materials = materials
+    sim.wavelength_um = 1.0
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=rays, origin=origin, direction=[0, 0, -1], offset_radius=0.05)
+    sim.outputs = [OutputType.RAY_STATE, OutputType.LAST_POSITION, OutputType.SCATTERING_COUNT]
+    sim.run()
+    return {o: sim.get_output_buffer(o) for o in sim.outputs}
+
+
+def test_instance_is_placed_by_its_transform(backend):
+    # An absorbing ball of radius 2 at x = 3 stops a beam at its top
+    absorber = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.DIFFUSE, 0.0)]
+    geometry = InstanceGeometry([_glass_ball()], _transform(2.0, (3, 0, 0))[None], [0], [1])
+    result = _beam_on_instances(backend, geometry, absorber, origin=(3, 0, 10))
+    assert (result[OutputType.RAY_STATE] == 1).all()
+    position = result[OutputType.LAST_POSITION]
+    assert np.allclose(position[:, 0], 3, atol=0.2)
+    assert (position[:, 2] > 1.95).all() and (position[:, 2] < 2.0001).all()
+
+    # beside the ball the beam passes
+    result = _beam_on_instances(backend, geometry, absorber, origin=(0, 0, 10))
+    assert (result[OutputType.RAY_STATE] == 0).all()
+    assert (result[OutputType.SCATTERING_COUNT] == 0).all()
+
+
+def test_each_instance_uses_its_own_material(backend):
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j),
+                 Material(MaterialType.DIFFUSE, 0.0)]
+    transforms = np.stack([_transform(1.0, (0, 0, 0)), _transform(1.0, (5, 0, 0))])
+    geometry = InstanceGeometry([_glass_ball()], transforms, [0, 0], [1, 2])
+    glass = _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10))
+    black = _beam_on_instances(backend, geometry, materials, origin=(5, 0, 10))
+    assert (glass[OutputType.RAY_STATE] == 0).all() and (glass[OutputType.SCATTERING_COUNT] >= 1).all()
+    assert (black[OutputType.RAY_STATE] == 1).all()
+
+
+# The material of a hit in nested instances is the ID of the innermost instance, the one that holds
+# the mesh. The OptiX documentation does not specify this for nested instance acceleration
+# structures; the Embree backend copies the behaviour, and these tests fail if either changes.
+
+@pytest.mark.parametrize("inner, outer", [(1, 2), (2, 1)])
+def test_nested_instances_use_the_innermost_material(backend, inner, outer):
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j),
+                 Material(MaterialType.DIFFUSE, 0.0)]
+    inside = InstanceGeometry([_glass_ball()], _transform()[None], [0], [inner])
+    geometry = InstanceGeometry([inside], _transform(1.0, (0, 0, 1))[None], [0], [outer])
+    result = _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10))
+    absorbed = (result[OutputType.RAY_STATE] == 1).all()
+    assert absorbed == (inner == 2)
+
+
+@pytest.mark.parametrize("absorbing_level", [0, 1, 2])
+def test_only_the_innermost_of_three_levels_decides_the_material(backend, absorbing_level):
+    # Level 0 is the innermost. Only a black innermost instance absorbs; the same ID on a
+    # level above it, while the innermost is glass, must not.
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j),
+                 Material(MaterialType.DIFFUSE, 0.0)]
+    ids = [2 if level == absorbing_level else 1 for level in range(3)]
+    geometry = _glass_ball()
+    for level, shift in enumerate([(0, 0, 0), (0, 0, 1), (0, 0, 1)]):
+        geometry = InstanceGeometry([geometry], _transform(1.0, shift)[None], [0], [ids[level]])
+    result = _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10))
+    assert (result[OutputType.RAY_STATE] == 1).all() == (absorbing_level == 0)
+
+
+def test_one_inner_instance_used_by_two_outer_instances_with_different_ids(backend):
+    # The outer IDs differ, the inner geometry is shared and has the ID of the glass
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j),
+                 Material(MaterialType.DIFFUSE, 0.0)]
+    inner = InstanceGeometry([_glass_ball()], _transform()[None], [0], [1])
+    transforms = np.stack([_transform(1.0, (0, 0, 0)), _transform(1.0, (5, 0, 0))])
+    geometry = InstanceGeometry([inner], transforms, [0, 0], [2, 2])
+    for x in (0, 5):
+        result = _beam_on_instances(backend, geometry, materials, origin=(x, 0, 10))
+        assert (result[OutputType.RAY_STATE] == 0).all()
+        assert (result[OutputType.SCATTERING_COUNT] >= 1).all()
+
+
+def test_instances_can_share_a_mesh_and_a_geometry_can_be_reused(backend):
+    ball = _glass_ball()
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j)]
+    transforms = np.stack([_transform(1.0, (4 * i, 0, 0)) for i in range(50)])
+    geometry = InstanceGeometry([ball], transforms, [0] * 50, [1] * 50)
+    for _ in range(2):
+        hit = _beam_on_instances(backend, geometry, materials, origin=(12, 0, 10))
+        gap = _beam_on_instances(backend, geometry, materials, origin=(14, 0, 10))
+        assert (hit[OutputType.SCATTERING_COUNT] >= 1).all()
+        assert (gap[OutputType.SCATTERING_COUNT] == 0).all()

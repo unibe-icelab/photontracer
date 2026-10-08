@@ -109,6 +109,13 @@ if(PHOTONTRACER_BUILD_EMBREE)
   set(EMBREE_GEOMETRY_QUAD OFF CACHE BOOL "")
   set(EMBREE_GEOMETRY_SUBDIVISION OFF CACHE BOOL "")
   set(EMBREE_GEOMETRY_USER OFF CACHE BOOL "")
+
+  # The AVX512 kernels take long to compile. Embree picks SSE4.2, AVX or AVX2 at run time; its AVX2
+  set(EMBREE_ISA_AVX512 OFF CACHE BOOL "")
+
+  # Instances in instances; the OptiX limit is a graph depth, which counts the mesh as well
+  set(PHOTONTRACER_EMBREE_INSTANCE_LEVELS 4 CACHE STRING "Maximum nesting depth of instances in the Embree backend")
+  set(EMBREE_MAX_INSTANCE_LEVEL_COUNT ${PHOTONTRACER_EMBREE_INSTANCE_LEVELS} CACHE STRING "" FORCE)
   add_subdirectory(external/embree)
 endif()
 
