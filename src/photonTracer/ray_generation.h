@@ -76,7 +76,8 @@ PT_INLINE PT_HD int healpixAng2PixRing(int nside, const float3 d)
     return ipix;
 }
 
-/// Parallel beam: a disk of rays around the source origin
+/// Parallel beam: a disk of rays around the source origin. The disk is perpendicular to the beam unless
+/// source.diskNormal is set; then the rays start in the plane with that normal and still travel along direction.
 template <typename NextSampleT>
 PT_INLINE PT_HD void computeRayParallel(const RayGeneratorData::ParallelSource &source, NextSampleT &nextSample, float3 &origin, float3 &direction)
 {
@@ -84,14 +85,16 @@ PT_INLINE PT_HD void computeRayParallel(const RayGeneratorData::ParallelSource &
     direction = source.direction;
     float sourceRadius = source.offsetRadius;
 
-    // Compute orthogonal vectors u and v
+    const float3 normal = otk::dot(source.diskNormal, source.diskNormal) > 0.0f ? source.diskNormal : direction;
+
+    // Compute orthogonal vectors u and v, both perpendicular to the disk normal
     float3 u = make_float3(0.0f, 1.0f, 0.0f);
-    if (fabsf(direction.y) > 0.999f)
+    if (fabsf(normal.y) > 0.999f)
     {
         u = make_float3(1.0f, 0.0f, 0.0f);
     }
-    u = otk::normalize(otk::cross(direction, u));
-    float3 v = otk::normalize(otk::cross(direction, u));
+    u = otk::normalize(otk::cross(normal, u));
+    float3 v = otk::normalize(otk::cross(normal, u));
 
     float x, y;
     do

@@ -796,6 +796,13 @@ class ParallelRayGenerator(IRayGenerator):
     ``origin`` and travel in the same ``direction``.  The direction vector is
     normalised automatically.
 
+    By default the disk is perpendicular to the beam, so its footprint on a
+    tilted surface is stretched by ``1 / cos(angle)``.  With ``disk_normal`` the
+    disk can lie in another plane, e.g. parallel to the surface that is
+    illuminated: the rays then start in that plane and still travel along
+    ``direction``, and the footprint on the surface is a circle of the same radius
+    at every angle of incidence.
+
     Args:
         number_of_rays: Total number of rays to launch.
         origin: Centre of the source disk (:data:`Vector3`).
@@ -803,6 +810,10 @@ class ParallelRayGenerator(IRayGenerator):
             automatically.
         offset_radius: Radius of the circular source disk in geometry units.
             Pass ``0`` for a single-point source.
+        disk_normal: Normal of the plane of the source disk
+            (:data:`Vector3`, normalised automatically), or ``None``
+            (default) for a disk perpendicular to ``direction``.  Must not be
+            (nearly) perpendicular to ``direction``.
 
     Example::
 
@@ -815,6 +826,15 @@ class ParallelRayGenerator(IRayGenerator):
             direction=[0, 0, 1],
             offset_radius=50.0,
         )
+
+        # beam at 60 degrees from the z axis, emitted from a disk parallel to the xy-plane
+        tilted = ParallelRayGenerator(
+            number_of_rays=100_000,
+            origin=[0, 0, -500],
+            direction=[np.sin(np.pi / 3), 0, np.cos(np.pi / 3)],
+            offset_radius=50.0,
+            disk_normal=[0, 0, 1],
+        )
     """
 
     def __init__(
@@ -823,6 +843,7 @@ class ParallelRayGenerator(IRayGenerator):
         origin: Vector3,
         direction: Vector3,
         offset_radius: float,
+        disk_normal: typing.Optional[Vector3] = None,
     ) -> None: ...
 
     @property
@@ -840,6 +861,16 @@ class ParallelRayGenerator(IRayGenerator):
 
     @direction.setter
     def direction(self, value: Vector3) -> None: ...
+
+    @property
+    def disk_normal(self) -> Vector3:
+        """Unit normal of the plane of the source disk; equal to ``direction`` for a disk perpendicular to the beam."""
+        ...
+
+    @disk_normal.setter
+    def disk_normal(self, value: typing.Optional[Vector3]) -> None:
+        """Set the normal of the source disk; ``None`` makes the disk perpendicular to ``direction`` again."""
+        ...
 
     @property
     def offset_radius(self) -> float:

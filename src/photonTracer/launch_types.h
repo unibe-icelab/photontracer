@@ -22,6 +22,7 @@ union RayGeneratorData
         float3 origin;
         float3 direction;
         float offsetRadius;
+        float3 diskNormal; // unit normal of the source disk; zero: the disk is perpendicular to direction
     } parallel;
     struct IsotropicSource
     {

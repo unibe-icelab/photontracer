@@ -934,3 +934,73 @@ def test_the_library_is_quiet_unless_verbose(backend, capfd, restore_verbosity):
     sim = _box_simulation(backend, _materials(2))
     sim.run()
     assert "Starting simulation" in capfd.readouterr().out
+
+
+def _run_parallel_source(backend, generator):
+    """Run a beam onto a slab at z=0 and return the source positions and directions of the rays."""
+    sim = Simulation(backend=backend)
+    slab = trimesh.creation.box(extents=[100, 100, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim.wavelength_um = 1
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j)]
+    sim.ray_generator = generator
+    sim.outputs = [OutputType.SOURCE_POSITION, OutputType.SOURCE_DIRECTION]
+    sim.run()
+    return sim.get_output_buffer(OutputType.SOURCE_POSITION), sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
+
+
+def test_disk_is_perpendicular_to_the_beam_by_default(backend):
+    k = np.array([np.sin(np.pi / 3), 0, np.cos(np.pi / 3)])
+    gen = ParallelRayGenerator(number_of_rays=20000, origin=-10 * k, direction=k, offset_radius=3)
+    assert np.allclose(gen.disk_normal, k)
+    pos, _ = _run_parallel_source(backend, gen)
+    assert np.allclose((pos - (-10 * k)) @ k, 0, atol=1e-4)
+
+
+def test_disk_normal_puts_the_disk_in_a_horizontal_plane(backend):
+    angle = np.radians(70)
+    k = np.array([np.sin(angle), 0, np.cos(angle)])
+    origin = np.array([0, 0, -20.0])
+    radius = 3.0
+    gen = ParallelRayGenerator(number_of_rays=40000, origin=origin, direction=k, offset_radius=radius,
+                               disk_normal=[0, 0, 1])
+    assert np.allclose(gen.disk_normal, [0, 0, 1])
+    pos, direction = _run_parallel_source(backend, gen)
+
+    # all rays start in the horizontal plane through the origin, within the disk, and travel along k
+    assert np.allclose(pos[:, 2], origin[2], atol=1e-4)
+    r = np.linalg.norm(pos[:, :2] - origin[:2], axis=1)
+    assert r.max() <= radius * (1 + 1e-4)
+    assert r.max() > 0.98 * radius
+    assert np.allclose(direction, k, atol=1e-6)
+    # uniform in the disk: a quarter of the points within half of the radius
+    assert np.mean(r < radius / 2) == pytest.approx(0.25, abs=0.02)
+
+    # the footprint on the plane z=0 is a circle of the same radius, shifted along the beam
+    hit = pos[:, :2] - pos[:, 2:3] / k[2] * k[:2]
+    shift = -origin[2] / k[2] * k[:2]
+    assert np.allclose(hit.mean(axis=0), shift, atol=0.1)
+    assert np.linalg.norm(hit - shift, axis=1).max() == pytest.approx(radius, rel=0.02)
+
+
+def test_disk_normal_can_be_changed_and_reset():
+    k = [0, 0, 1]
+    gen = ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 0], direction=k, offset_radius=1,
+                               disk_normal=[1, 0, 1])
+    assert np.allclose(gen.disk_normal, np.array([1, 0, 1]) / np.sqrt(2))
+    gen.disk_normal = None
+    assert np.allclose(gen.disk_normal, k)
+    gen.disk_normal = [0, 1, 1]
+    assert np.allclose(gen.disk_normal, np.array([0, 1, 1]) / np.sqrt(2))
+
+
+def test_disk_normal_perpendicular_to_the_beam_is_rejected(backend):
+    with pytest.raises(ValueError, match="disk_normal"):
+        ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 0], direction=[0, 0, 1], offset_radius=1,
+                             disk_normal=[1, 0, 0])
+    # a direction set afterwards that makes the disk degenerate is caught when the simulation runs
+    gen = ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=1,
+                               disk_normal=[0, 0, 1])
+    gen.direction = [1, 0, 0]
+    with pytest.raises(ValueError, match="disk_normal"):
+        _run_parallel_source(backend, gen)

@@ -1,6 +1,6 @@
 [project]
 name = "photontracer"
-version = "1.0.2"
+version = "1.1.0"
 description = "PhotonTracer: Light scattering simulation"
 authors = [{name = "Rafael Ottersberg", email = "rafael.ottersberg@gmx.ch"}]
 readme = "README.md"

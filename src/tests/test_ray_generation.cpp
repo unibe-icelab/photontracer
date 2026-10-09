@@ -144,6 +144,47 @@ TEST(RayGeneration, ParallelWorksForABeamAlongY)
     EXPECT_GT(otk::length(origin), 0.0f);
 }
 
+TEST(RayGeneration, ParallelDiskNormalSetsThePlaneOfTheDisk)
+{
+    // beam tilted by 60 degrees from the z axis, emitted from a disk in the xy-plane
+    RayGeneratorData::ParallelSource source{};
+    source.origin = make_float3(1, 2, 3);
+    source.direction = make_float3(std::sin(1.0471976f), 0, std::cos(1.0471976f));
+    source.diskNormal = make_float3(0, 0, 1);
+    source.offsetRadius = 2.0f;
+
+    float3 origin, direction;
+    // x = 1, y = 0 lies on the rim; the offset is in the plane of the disk, not perpendicular to the beam
+    ScriptedSample edge{1.0f, 0.5f};
+    computeRayParallel(source, edge, origin, direction);
+    const float3 offset = origin - source.origin;
+    EXPECT_NEAR(otk::length(offset), 2.0f, 1e-5);
+    EXPECT_NEAR(offset.z, 0.0f, 1e-5);
+    EXPECT_GT(std::fabs(otk::dot(offset, source.direction)), 0.1f);
+    expectNear(direction, source.direction);
+
+    ScriptedSample center{0.5f, 0.5f};
+    computeRayParallel(source, center, origin, direction);
+    expectNear(origin, source.origin);
+}
+
+TEST(RayGeneration, ParallelZeroDiskNormalMeansPerpendicularToTheBeam)
+{
+    RayGeneratorData::ParallelSource withoutNormal{};
+    withoutNormal.direction = make_float3(0.6f, 0.0f, 0.8f);
+    withoutNormal.offsetRadius = 1.5f;
+    RayGeneratorData::ParallelSource withNormal = withoutNormal;
+    withNormal.diskNormal = withoutNormal.direction;
+
+    float3 originA, originB, direction;
+    ScriptedSample a{0.9f, 0.3f};
+    ScriptedSample b{0.9f, 0.3f};
+    computeRayParallel(withoutNormal, a, originA, direction);
+    computeRayParallel(withNormal, b, originB, direction);
+    expectNear(originA, originB);
+    EXPECT_NEAR(otk::dot(originA, withoutNormal.direction), 0.0f, 1e-5);
+}
+
 TEST(RayGeneration, IsotropicStartsOnTheSphereAndLooksInward)
 {
     RayGeneratorData::IsotropicSource source{};
