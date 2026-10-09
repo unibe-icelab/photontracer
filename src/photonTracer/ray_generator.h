@@ -27,6 +27,12 @@ public:
         direction_ = otk::normalize(direction_);
     }
 
+    ParallelRayGenerator(uint32_t numberOfRays, float3 origin, float3 direction, float offsetRadius, float3 diskNormal)
+        : ParallelRayGenerator(numberOfRays, origin, direction, offsetRadius)
+    {
+        setDiskNormal(diskNormal);
+    }
+
     RayGeneratorType getType() const override { return RAYGEN_PARALLEL; }
 
     RayGeneratorData getData() const override
@@ -36,6 +42,12 @@ public:
         data.parallel.origin = origin_;
         data.parallel.direction = direction_;
         data.parallel.offsetRadius = offsetRadius_;
+        data.parallel.diskNormal = make_float3(0.0f, 0.0f, 0.0f);
+        if (hasDiskNormal_)
+        {
+            checkDiskNormal(diskNormal_, direction_);
+            data.parallel.diskNormal = diskNormal_;
+        }
         return data;
     }
 
@@ -65,11 +77,36 @@ public:
     float getOffsetRadius() const { return offsetRadius_; }
     void setOffsetRadius(float radius) { offsetRadius_ = radius; }
 
+    /// Unit normal of the plane the rays start in; the direction if the disk is perpendicular to the beam
+    float3 getDiskNormal() const { return hasDiskNormal_ ? diskNormal_ : direction_; }
+    bool hasDiskNormal() const { return hasDiskNormal_; }
+    void setDiskNormal(const float3 &diskNormal)
+    {
+        const float3 normal = otk::normalize(diskNormal);
+        checkDiskNormal(normal, direction_);
+        diskNormal_ = normal;
+        hasDiskNormal_ = true;
+    }
+    /// The disk is perpendicular to the beam again
+    void resetDiskNormal() { hasDiskNormal_ = false; }
+
 private:
+    /// A disk that is (nearly) parallel to the beam would have no cross section
+    static void checkDiskNormal(const float3 &normal, const float3 &direction)
+    {
+        const bool finite = std::isfinite(normal.x) && std::isfinite(normal.y) && std::isfinite(normal.z);
+        if (!finite || fabsf(otk::dot(normal, otk::normalize(direction))) < 1e-3f)
+        {
+            throw std::invalid_argument("disk_normal must be finite and not (nearly) perpendicular to the direction of the beam");
+        }
+    }
+
     uint32_t numberOfRays_ = 1;
     float3 origin_;
     float3 direction_;
     float offsetRadius_;
+    float3 diskNormal_ = make_float3(0.0f, 0.0f, 0.0f);
+    bool hasDiskNormal_ = false;
 };
 
 class IsotropicRayGenerator : public IRayGenerator

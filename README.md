@@ -120,6 +120,23 @@ Refer to the example jupyter notebooks in `examples/` and the docstrings of the 
 
 The library is quiet by default. To see which device is used and how long compiling and launching take, call `photontracer.set_verbose(True)`.
 
+### Oblique beams
+
+By default the source disk of a `ParallelRayGenerator` is perpendicular to the beam. For a beam that hits a surface at an angle this stretches the illuminated area by `1/cos(angle)`. With `disk_normal` the rays start in another plane, e.g. one parallel to the surface, and still travel along `direction`; the illuminated area on the surface is then a circle of the same radius at every angle:
+
+```python
+angle = np.radians(60)
+gen = photontracer.ParallelRayGenerator(
+    number_of_rays=1_000_000,
+    origin=[0, 0, -10],                              # centre of the source disk, in front of the surface
+    direction=[np.sin(angle), 0, np.cos(angle)],     # beam 60 degrees from the surface normal (z)
+    offset_radius=5.0,
+    disk_normal=[0, 0, 1],                           # the disk lies parallel to the xy-plane
+)
+```
+
+The beam stays uniform. `disk_normal` must not be (nearly) perpendicular to `direction`. `gen.disk_normal = None` makes the disk perpendicular to the beam again.
+
 ### Tracing single rays
 
 To see what happens to individual rays, list their indices (the position of the ray in the output buffers) and read the steps after the run:

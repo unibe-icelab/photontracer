@@ -537,19 +537,37 @@ PYBIND11_MODULE(photontracer_bindings, m)
     py::class_<IRayGenerator, std::shared_ptr<IRayGenerator>>(m, "IRayGenerator");
 
     py::class_<ParallelRayGenerator, IRayGenerator, std::shared_ptr<ParallelRayGenerator>>(m, "ParallelRayGenerator")
-        .def(py::init([](int number_of_rays, py::object origin, py::object direction, float offset_radius)
-                      { return ParallelRayGenerator(
-                            number_of_rays,
-                            toFloat3(origin, "origin"),
-                            toFloat3(direction, "direction"),
-                            offset_radius); }),
-             py::arg("number_of_rays"), py::arg("origin"), py::arg("direction"), py::arg("offset_radius"))
+        .def(py::init([](int number_of_rays, py::object origin, py::object direction, float offset_radius, py::object disk_normal)
+                      {
+                          ParallelRayGenerator generator(
+                              number_of_rays,
+                              toFloat3(origin, "origin"),
+                              toFloat3(direction, "direction"),
+                              offset_radius);
+                          if (!disk_normal.is_none())
+                          {
+                              generator.setDiskNormal(toFloat3(disk_normal, "disk_normal"));
+                          }
+                          return generator; }),
+             py::arg("number_of_rays"), py::arg("origin"), py::arg("direction"), py::arg("offset_radius"),
+             py::arg("disk_normal") = py::none())
         .def_property("origin", [](const ParallelRayGenerator &self)
                       { return toPyObject(self.getOrigin()); }, [](ParallelRayGenerator &self, py::object origin)
                       { self.setOrigin(toFloat3(origin, "origin")); })
         .def_property("direction", [](const ParallelRayGenerator &self)
                       { return toPyObject(self.getDirection()); }, [](ParallelRayGenerator &self, py::object direction)
                       { self.setDirection(toFloat3(direction, "direction")); })
+        .def_property("disk_normal", [](const ParallelRayGenerator &self)
+                      { return toPyObject(self.getDiskNormal()); }, [](ParallelRayGenerator &self, py::object disk_normal)
+                      {
+                          if (disk_normal.is_none())
+                          {
+                              self.resetDiskNormal();
+                          }
+                          else
+                          {
+                              self.setDiskNormal(toFloat3(disk_normal, "disk_normal"));
+                          } })
         .def_property("offset_radius", &ParallelRayGenerator::getOffsetRadius, &ParallelRayGenerator::setOffsetRadius);
 
     py::class_<IsotropicRayGenerator, IRayGenerator, std::shared_ptr<IsotropicRayGenerator>>(m, "IsotropicRayGenerator")
