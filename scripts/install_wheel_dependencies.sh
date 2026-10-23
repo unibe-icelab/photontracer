@@ -6,6 +6,20 @@ set -euo pipefail
 CUDA_VERSION=12-4
 TBB_VERSION=v2023.1.0
 
+# In CI, the compiler cache has its own binary in the container: the build never reaches the sccache
+# of the host runner. It talks to the GitHub cache directly with the variables passed in by the workflow.
+if [ "${SCCACHE_GHA_ENABLED:-}" = "true" ]; then
+    SCCACHE_VERSION=v0.18.0
+    SCCACHE_SHA256=45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+    SCCACHE_DIR_NAME=sccache-${SCCACHE_VERSION}-x86_64-unknown-linux-musl
+    curl -fsSL -o /tmp/sccache.tar.gz \
+        "https://github.com/mozilla/sccache/releases/download/${SCCACHE_VERSION}/${SCCACHE_DIR_NAME}.tar.gz"
+    echo "${SCCACHE_SHA256}  /tmp/sccache.tar.gz" | sha256sum -c -
+    tar -xzf /tmp/sccache.tar.gz -C /tmp
+    install -m 755 "/tmp/${SCCACHE_DIR_NAME}/sccache" /usr/local/bin/sccache
+    rm -rf /tmp/sccache.tar.gz "/tmp/${SCCACHE_DIR_NAME}"
+fi
+
 # CUDA 12.4 supports GCC up to 13; nvcc uses it as host compiler through CUDAHOSTCXX
 dnf install -y dnf-plugins-core gcc-toolset-13-gcc-c++
 

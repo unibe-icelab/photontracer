@@ -33,13 +33,17 @@ The Embree backend runs on any x86-64 CPU and needs no GPU.
 
 ### From PyPI
 
-Wheels for Linux (x86-64, glibc 2.28 or newer, as on Ubuntu 20.04+, Debian 10+ and RHEL 8+) and Python 3.9 to 3.14 are available:
+Wheels for Python 3.9 to 3.14 are available for:
+
+- Linux (x86-64, glibc 2.28 or newer, as on Ubuntu 20.04+, Debian 10+ and RHEL 8+)
+- Windows (x86-64)
+- macOS (Apple silicon, macOS 11 or newer); this wheel has the Embree backend only, as there is no CUDA on the Mac
 
 ```bash
 pip install photontracer
 ```
 
-One wheel contains both backends. The OptiX backend needs an NVIDIA GPU and display driver 535 or newer; it loads the driver at run time, so the wheel works without CUDA installed. On a machine without a CUDA device `Simulation()` uses the Embree backend and emits a warning. For other platforms, build from source.
+The Linux and Windows wheels contain both backends. The OptiX backend needs an NVIDIA GPU and a current display driver (535 or newer on Linux); it loads the driver at run time, so the wheel works without CUDA installed. On a machine without a CUDA device `Simulation()` uses the Embree backend and emits a warning. For other platforms, build from source.
 
 ### Build from source
 
@@ -133,23 +137,6 @@ Refer to the example jupyter notebooks in `examples/` (`minimal.py` is the short
 ### Output messages
 
 The library is quiet by default. To see which device is used and how long compiling and launching take, call `phtr.set_verbose(True)`.
-
-### Oblique beams
-
-By default the source disk of a `ParallelRayGenerator` is perpendicular to the beam. For a beam that hits a surface at an angle this stretches the illuminated area by `1/cos(angle)`. With `disk_normal` the rays start in another plane, e.g. one parallel to the surface, and still travel along `direction`; the illuminated area on the surface is then a circle of the same radius at every angle:
-
-```python
-angle = np.radians(60)
-gen = phtr.ParallelRayGenerator(
-    number_of_rays=1_000_000,
-    origin=[0, 0, -10],                              # centre of the source disk, in front of the surface
-    direction=[np.sin(angle), 0, np.cos(angle)],     # beam 60 degrees from the surface normal (z)
-    offset_radius=5.0,
-    disk_normal=[0, 0, 1],                           # the disk lies parallel to the xy-plane
-)
-```
-
-The beam stays uniform. `disk_normal` must not be (nearly) perpendicular to `direction`. `gen.disk_normal = None` makes the disk perpendicular to the beam again.
 
 ### Tracing single rays
 
