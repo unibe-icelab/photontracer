@@ -13,3 +13,9 @@ _backends = [b for b in available_backends() if _selected is None or b.name in _
 @pytest.fixture(params=_backends, ids=lambda backend: backend.name)
 def backend(request):
     return request.param
+
+
+@pytest.fixture
+def backends():
+    """All selected backends, for tests that compare them."""
+    return _backends

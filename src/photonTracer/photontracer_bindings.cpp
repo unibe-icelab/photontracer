@@ -672,7 +672,24 @@ PYBIND11_MODULE(photontracer_bindings, m)
                           options.optixLoggingLevel = optixLoggingLevel;
                           options.enableValidationMode = enableValidationMode;
                           options.cpuThreads = cpuThreads;
-                          return std::make_unique<Simulation>(makeBackend(backend.value_or(available.front()), options)); }),
+                          if (!backend)
+                          {
+                              backend = available.front();
+                              // A build with OptiX on a machine without a usable GPU, e.g. a wheel from PyPI
+                              const bool hasEmbree = std::find(available.begin(), available.end(), BackendType::EMBREE) != available.end();
+                              if (*backend == BackendType::OPTIX && hasEmbree && !isCudaAvailable())
+                              {
+                                  backend = BackendType::EMBREE;
+                                  if (PyErr_WarnEx(PyExc_RuntimeWarning,
+                                                   "No CUDA device is available, using the Embree backend on the CPU. "
+                                                   "Pass backend=Backend.EMBREE to select it explicitly.",
+                                                   1) < 0)
+                                  {
+                                      throw py::error_already_set();
+                                  }
+                              }
+                          }
+                          return std::make_unique<Simulation>(makeBackend(*backend, options)); }),
              py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false,
              py::arg("backend") = py::none(), py::arg("cpu_threads") = 0, doc::Simulation_init)
         .def("run", [](Simulation &sim)

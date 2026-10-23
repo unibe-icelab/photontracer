@@ -81,7 +81,7 @@ pip install . -C cmake.define.PHOTONTRACER_BUILD_OPTIX=OFF
 
 ### Backends
 
-`Simulation()` uses OptiX if the build contains it and Embree otherwise. Choose one explicitly with the `backend` argument, and list those of the build with `available_backends()`:
+`Simulation()` uses OptiX if the build contains it and a CUDA device is available, and Embree otherwise. Falling back to Embree in a build with OptiX, e.g. a wheel from PyPI on a machine without an NVIDIA GPU, emits a `RuntimeWarning`. Choose one explicitly with the `backend` argument, and list those of the build with `available_backends()`:
 
 ```python
 sim = photontracer.Simulation(backend=photontracer.Backend.EMBREE, cpu_threads=8)

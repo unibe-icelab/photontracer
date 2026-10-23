@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Embree backend that runs the simulation on the CPU, selected with the `backend` argument of `Simulation`; `available_backends()` lists the backends of a build. It supports meshes, instances nested up to `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` levels (default 4) and the `DIRECTION_HISTOGRAM_HEALPIX` output, and only the `PCG32` generator
+- `Simulation()` without a `backend` falls back to Embree with a `RuntimeWarning` when the build has OptiX but no CUDA device is available, e.g. a wheel from PyPI on a machine without an NVIDIA GPU
 - `Simulation.random_number_generator` to select `PCG32` or `MRG32K3A` (curand, OptiX only) at run time
 - `Simulation.trace_rays`, `max_trace_steps` and `get_trace()` to record the steps (positions, directions, media, Stokes vector, event) of up to 256 chosen rays on both backends
 - `DiffuseRayGenerator`, a disk source emitting cosine-weighted directions around an axis to model diffuse illumination of a surface
