@@ -516,6 +516,9 @@ constexpr const char *Simulation_stokes_vector = R"doc(Stokes vector ``[I, Q, U,
 gives every ray a random linear polarization, ``nan`` for ``V`` a random
 circular one. ``(1, 0, 0, 0)`` is unpolarized light, ``(1, 1, 0, 0)`` light
 polarized along the Q+ axis.
+
+Raises:
+    ValueError: If the vector is not a valid Stokes vector.
 )doc";
 
 constexpr const char *Simulation_q_minus_axis_seed = R"doc(Direction from which the Q− axis of the source Stokes vector is made.
@@ -537,6 +540,9 @@ constexpr const char *Simulation_max_nested_geometry_levels = R"doc(Maximum dept
 
 Must be between ``1`` and the limit of the backend. Increase it for
 geometries nested more deeply.
+
+Raises:
+    ValueError: If the value is outside of that range.
 )doc";
 
 constexpr const char *Simulation_seed = R"doc(Seed of the random number generator, default ``42``.
@@ -568,6 +574,9 @@ When > ``0`` (a power of 2), the directions of the rays that leave the scene
 are counted in ``12 * NSIDE ** 2`` HEALPix pixels, available as
 ``OutputType.DIRECTION_HISTOGRAM_HEALPIX``. ``0`` (default) disables the
 histogram.
+
+Raises:
+    ValueError: If the value is not ``0`` or a power of 2.
 )doc";
 
 constexpr const char *Simulation_outputs = R"doc(The output buffers to fill in the next run.

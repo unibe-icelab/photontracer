@@ -368,7 +368,8 @@ void EmbreeRaytracingBackend::buildInstances(const InstanceGeometry &instances, 
         const unsigned int particleTypeId = instances.getParticleTypeIds()[i];
         if (particleTypeId >= subGeometries.size())
         {
-            throw std::runtime_error("Particle type ID out of bounds for subGeometries.");
+            throw std::runtime_error("Particle type ID " + std::to_string(particleTypeId) + " of instance " + std::to_string(i) +
+                                     " is out of range for " + std::to_string(subGeometries.size()) + " sub_geometries");
         }
         const auto &child = *static_cast<const EmbreeAccelerationStructure *>(subGeometries[particleTypeId]->getAccelerationStructure());
         deepestChild = std::max(deepestChild, child.instanceLevels);

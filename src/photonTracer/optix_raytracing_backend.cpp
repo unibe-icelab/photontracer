@@ -30,8 +30,8 @@ OptixRaytracingBackend::OptixRaytracingBackend(int gpuId, int optixLoggingLevel,
     }
     else
     {
-        std::cerr << "Warning: Invalid device ID " << gpuId
-                  << ". Using default device." << std::endl;
+        std::cerr << "Warning: there is no CUDA device with gpu_id " << gpuId
+                  << ", using the default device." << std::endl;
     }
 
     // Initialize the CUDA context
@@ -171,7 +171,8 @@ void OptixRaytracingBackend::buildInstances(const InstanceGeometry &instances, O
         const unsigned int particleTypeId = instances.getParticleTypeIds()[i];
         if (particleTypeId >= subGeometries.size())
         {
-            throw std::runtime_error("Particle type ID out of bounds for subGeometries.");
+            throw std::runtime_error("Particle type ID " + std::to_string(particleTypeId) + " of instance " + std::to_string(i) +
+                                     " is out of range for " + std::to_string(subGeometries.size()) + " sub_geometries");
         }
         instance.traversableHandle = traversableHandle(*subGeometries[particleTypeId]);
         allInstances[i] = instance;

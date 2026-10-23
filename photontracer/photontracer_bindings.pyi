@@ -1172,6 +1172,9 @@ class Simulation:
         are counted in ``12 * NSIDE ** 2`` HEALPix pixels, available as
         ``OutputType.DIRECTION_HISTOGRAM_HEALPIX``. ``0`` (default) disables the
         histogram.
+        
+        Raises:
+            ValueError: If the value is not ``0`` or a power of 2.
         """
     @direction_healpix_nside.setter
     def direction_healpix_nside(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
@@ -1219,6 +1222,9 @@ class Simulation:
         
         Must be between ``1`` and the limit of the backend. Increase it for
         geometries nested more deeply.
+        
+        Raises:
+            ValueError: If the value is outside of that range.
         """
     @max_nested_geometry_levels.setter
     def max_nested_geometry_levels(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
@@ -1322,6 +1328,9 @@ class Simulation:
         gives every ray a random linear polarization, ``nan`` for ``V`` a random
         circular one. ``(1, 0, 0, 0)`` is unpolarized light, ``(1, 1, 0, 0)`` light
         polarized along the Q+ axis.
+        
+        Raises:
+            ValueError: If the vector is not a valid Stokes vector.
         """
     @stokes_vector.setter
     def stokes_vector(self, arg1: photontracer._typing.Vector4) -> None:
