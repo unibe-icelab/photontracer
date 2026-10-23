@@ -89,6 +89,8 @@ jobs:
   build-wheels-windows:
     name: Build wheel (${{ matrix.python }}, Windows)
     runs-on: windows-2022
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
