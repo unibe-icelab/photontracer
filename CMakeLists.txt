@@ -127,7 +127,7 @@ endif()
 if(PHOTONTRACER_BUILD_OPTIX OR PHOTONTRACER_BUILD_EMBREE)
   set(Python3_FIND_STRATEGY LOCATION)
   set(Python3_FIND_VIRTUALENV FIRST)
-  find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+  find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
   add_subdirectory(external/pybind11)
 endif()
 

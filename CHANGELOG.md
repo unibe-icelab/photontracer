@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Embree backend that runs the simulation on the CPU, selected with the `backend` argument of `Simulation`; `available_backends()` lists the backends of a build. It supports meshes, instances nested up to `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` levels (default 4) and the `DIRECTION_HISTOGRAM_HEALPIX` output, and only the `PCG32` generator
+- `Simulation()` without a `backend` falls back to Embree with a `RuntimeWarning` when the build has OptiX but no CUDA device is available, e.g. a wheel from PyPI on a machine without an NVIDIA GPU
 - `Simulation.random_number_generator` to select `PCG32` or `MRG32K3A` (curand, OptiX only) at run time
 - `Simulation.trace_rays`, `max_trace_steps` and `get_trace()` to record the steps (positions, directions, media, Stokes vector, event) of up to 256 chosen rays on both backends
 - `DiffuseRayGenerator`, a disk source emitting cosine-weighted directions around an axis to model diffuse illumination of a surface
@@ -34,6 +35,7 @@ All notable changes to this project will be documented in this file.
 - `Material(REFLECTIVE, reflectivity)` and `Material(REFRACTIVE, n)` with a real `n` raising `ValueError`; the reflectivity of a mirror without fuzziness is now checked to be in [0, 1]
 - `calculate_volume_fraction()` discarding a pending rebuild of the ray tracing pipeline, so that e.g. a change of geometry type or of `random_number_generator` was ignored by the next `run()`
 - Wrong defaults in the documentation (`seed` is 42, `use_complex_fresnel` is on, `max_nested_geometry_levels` is 5)
+- The wheel containing the headers, static libraries and documentation of Embree and the OptiX Toolkit, and, when built without `--as-needed`, requiring `libcuda.so.1` to import the module
 
 ### Internal
 
@@ -41,6 +43,8 @@ All notable changes to this project will be documented in this file.
 - The physics is host-compilable, with CPU-only tests (`runHostTests`) and statistical tests of the generator
 - `benchmarks/benchmark.py` for timing, `benchmarks/golden.py` to compare the output or statistics of two builds
 - CI compiles the OptiX build without a GPU, runs the CPU tests for Python 3.9 and 3.13, and checks that the committed stub is up to date (`scripts/generate_stubs.py`)
+- A workflow builds manylinux_2_28 wheels for Python 3.9 to 3.14 with cibuildwheel (CUDA 12.4, OptiX and Embree), tests the Embree backend and publishes development versions to TestPyPI
+- The Python tests skip the OptiX backend on a machine without a CUDA device
 - Add this changelog, and update LICENSE with the current affiliation of Rafael Ottersberg
 
 ## 1.0.2 - 18-03-2026

@@ -631,6 +631,17 @@ def test_a_build_has_a_backend_and_creates_it_by_default():
     assert sim.random_number_generator == RandomNumberGenerator.PCG32
 
 
+def test_default_falls_back_to_embree_without_cuda():
+    both = all(b in available_backends() for b in (Backend.OPTIX, Backend.EMBREE))
+    if not both or photontracer.is_cuda_available():
+        pytest.skip("needs a build with both backends on a machine without a CUDA device")
+    with pytest.warns(RuntimeWarning, match="No CUDA device"):
+        sim = Simulation()
+    # MRG32K3A is OptiX only
+    with pytest.raises(ValueError, match="random number generator"):
+        sim.random_number_generator = RandomNumberGenerator.MRG32K3A
+
+
 def test_embree_only_supports_pcg32():
     if Backend.EMBREE not in available_backends():
         pytest.skip("this build has no Embree backend")
@@ -957,11 +968,11 @@ def test_a_run_without_traced_rays_still_works_after_a_traced_one(backend):
         sim.get_trace()
 
 
-def test_traces_agree_between_backends():
-    if len(available_backends()) < 2:
+def test_traces_agree_between_backends(backends):
+    if len(backends) < 2:
         pytest.skip("needs two backends")
     traces = []
-    for backend in available_backends():
+    for backend in backends:
         sim = _diamond_ball_simulation(backend, rays=200)
         sim.trace_rays = [1, 2, 3]
         sim.run()

@@ -415,8 +415,9 @@ Args:
         ``4``. OptiX only.
     enable_validation_mode: Enable the OptiX validation mode with additional
         runtime checks. Much slower, for development only. OptiX only.
-    backend: :class:`Backend` to trace with. By default the first of
-        :func:`available_backends`, which is OptiX if the build has it.
+    backend: :class:`Backend` to trace with. By default OptiX if the build
+        has it and a CUDA device is available, and Embree otherwise. Falling
+        back to Embree in a build with OptiX emits a ``RuntimeWarning``.
     cpu_threads: Number of threads of the Embree backend; ``0`` uses all
         cores.
 )doc";

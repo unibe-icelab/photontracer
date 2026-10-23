@@ -1,0 +1,83 @@
+name: Wheels
+on:
+  # Pull requests that change the packaging, to test it before the workflow is on the default branch
+  pull_request:
+    paths:
+      - .github/workflows/wheels.yml
+      - pyproject.toml
+      - scripts/install_wheel_dependencies.sh
+  workflow_dispatch:
+  # Publishing a GitHub release is the only way to upload to PyPI
+  release:
+    types: [published]
+jobs:
+  build-wheels:
+    name: Build wheel (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per Python version, each compiles everything
+        python: [cp39, cp310, cp311, cp312, cp313, cp314]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Set a development version
+        # TestPyPI accepts every version only once
+        if: github.event_name != 'release'
+        run: sed -i -E 's/^version = "([^"]+)"/version = "\1.dev${{ github.run_number }}"/' pyproject.toml
+      - name: Check that the release tag matches the version
+        if: github.event_name == 'release'
+        run: |
+          version=$(sed -n -E 's/^version = "([^"]+)"/\1/p' pyproject.toml)
+          if [ "${{ github.event.release.tag_name }}" != "v$version" ]; then
+            echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
+            exit 1
+          fi
+      - uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_BUILD: ${{ matrix.python }}-manylinux_x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.python }}
+          path: wheelhouse/*.whl
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build-wheels
+    # Pull requests from forks get no token for trusted publishing
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/photontracer
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build-wheels
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    # The environment restricts the tags that may deploy and can require an approval, see the
+    # repository settings; the PyPI publisher accepts only this environment
+    environment:
+      name: pypi
+      url: https://pypi.org/p/photontracer
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
