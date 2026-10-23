@@ -290,7 +290,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def(py::init([](MaterialType type, const std::complex<float> &refractive_index)
                       {
             if (type != REFRACTIVE) {
-                throw py::value_error("Complex refractive index can only be used with REFRACTIVE material type");
+                throw py::value_error("A complex refractive_index alone can only be used with the REFRACTIVE material type");
             }
             Material mat;
             mat.type = type;
@@ -303,7 +303,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def(py::init([](MaterialType type, const std::complex<float> &refractive_index, float scattering_coefficient, float asymetryParameter)
                       {
             if (type != VOLUME_SCATTERING) {
-                throw py::value_error("Parameters can only be used with VOLUME_SCATTERING material type");
+                throw py::value_error("refractive_index, scattering_coefficient and g can only be used with the VOLUME_SCATTERING material type");
             }
             Material mat;
             mat.type = type;
@@ -318,10 +318,10 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def(py::init([](MaterialType type, float albedo)
                       {
             if (type != DIFFUSE) {
-                throw py::value_error("Albedo parameter can only be used with DIFFUSE material type");
+                throw py::value_error("albedo can only be used with the DIFFUSE material type");
             }
             if (albedo < 0.0f || albedo > 1.0f) {
-                throw py::value_error("Albedo must be between 0.0 and 1.0, got " + std::to_string(albedo));
+                throw py::value_error("albedo must be in [0, 1], got " + std::to_string(albedo));
             }
             Material mat;
             mat.type = type;
@@ -332,13 +332,13 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def(py::init([](MaterialType type, float reflectivity, float fuzziness)
                       {
             if (type != REFLECTIVE) {
-                throw py::value_error("Reflectivity and fuzziness can only be used with REFLECTIVE material type");
+                throw py::value_error("reflectivity and fuzziness can only be used with the REFLECTIVE material type");
             }
             if (reflectivity < 0.0f || reflectivity > 1.0f) {
-                throw py::value_error("Reflectivity must be between in [0.0, 1.0], got " + std::to_string(reflectivity));
+                throw py::value_error("reflectivity must be in [0, 1], got " + std::to_string(reflectivity));
             }
             if (fuzziness < 0.0f || fuzziness >= 1.0f) {
-                throw py::value_error("Fuzziness must be between in [0.0, 1.0), got " + std::to_string(fuzziness));
+                throw py::value_error("fuzziness must be in [0, 1), got " + std::to_string(fuzziness));
             }
             Material mat;
             mat.type = type;
@@ -351,7 +351,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def(py::init([](MaterialType type, float reflectivity)
                       {
             if (type != REFLECTIVE) {
-                throw py::value_error("Reflectivity can only be used with REFLECTIVE material type");
+                throw py::value_error("reflectivity can only be used with the REFLECTIVE material type");
             }
             Material mat;
             mat.type = type;
@@ -363,7 +363,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def(py::init([](MaterialType type, const RefractiveIndex &ri)
                       {
             if (type != REFRACTIVE) {
-                throw py::value_error("RefractiveIndex can only be used with REFRACTIVE material type");
+                throw py::value_error("A RefractiveIndex can only be used with the REFRACTIVE material type");
             }
             Material mat;
             mat.type = type;
@@ -536,6 +536,10 @@ PYBIND11_MODULE(photontracer_bindings, m)
                 std::vector<unsigned int> type_ids_vec;
                 type_ids_vec.reserve(type_ids_array.shape(0));
                 for (py::ssize_t i = 0; i < type_ids_array.shape(0); ++i) {
+                    if (type_ids_array(i) >= sub_geometries.size()) {
+                        throw py::value_error("particle_type_ids[" + std::to_string(i) + "] is " + std::to_string(type_ids_array(i)) +
+                                              ", out of range for " + std::to_string(sub_geometries.size()) + " sub_geometries");
+                    }
                     type_ids_vec.push_back(type_ids_array(i));
                 }
 
@@ -661,21 +665,22 @@ PYBIND11_MODULE(photontracer_bindings, m)
             auto *deviceBuffers = sim.getDeviceOutputBuffers();
             if (!deviceBuffers)
             {
-                throw std::runtime_error("Output buffers not initialized. Call run() first.");
+                throw std::runtime_error("There are no output buffers yet; call Simulation.run() first");
             }
 
             auto rayOutput = sim.getRayOutput();
             if (!rayOutput)
             {
-                throw std::runtime_error("Outputs not configured. Call configure_outputs() first.");
+                throw std::runtime_error("Simulation.outputs is not set");
             }
 
             const auto &descriptor = rayOutput->getDescriptor(type);
-            const BufferLayout &layout = deviceBuffers->getBufferLayout(type);
-            if (!layout.devicePtr)
+            if (!deviceBuffers->getBuffer<void>(type))
             {
-                throw std::runtime_error("Output buffer for the specified type is not available.");
+                throw std::runtime_error(py::str(py::cast(type)).cast<std::string>() +
+                                         " was not in Simulation.outputs for the last run()");
             }
+            const BufferLayout &layout = deviceBuffers->getBufferLayout(type);
 
             const uint3 shape = layout.shape;
 
@@ -826,7 +831,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .def_property("outputs", [](const Simulation &sim) -> std::vector<OutputType>
                       {
             if (!sim.getRayOutput()) {
-                throw std::runtime_error("Outputs not configured. Call configure_outputs() first.");
+                throw std::runtime_error("Simulation.outputs is not set");
             }
 
             const auto &descriptors = sim.getRayOutput()->getDescriptors();

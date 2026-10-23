@@ -33,6 +33,8 @@ All notable changes to this project will be documented in this file.
 - Document the Python API in the bindings, so `help()` shows it, and generate `photontracer_bindings.pyi` from them with `scripts/generate_stubs.py`; CI fails if the committed stub is out of date. The documentation of the outputs now gives the codes of `RAY_STATE`, the frame of the Stokes vectors, the units and what `NUMBER_OF_WARNINGS` counts, and corrects several defaults that were wrong (`seed` is 42, `use_complex_fresnel` is on, `max_nested_geometry_levels` is 5)
 - Vector arguments (`Vector3`, `Vector4`) are converted by a type caster: a wrong number of values raises `ValueError` with a shorter message, and an argument of a wrong type a `TypeError` from pybind11 instead of one naming the argument. Vector properties still return tuples
 - Fix `ParallelRayGenerator.direction`, which was not normalised when set after construction
+- Name the Python attributes in error messages instead of the C++ functions (e.g. `Simulation.wavelength_um is not set` instead of `Call setWavelengthUm() first`). `get_output_buffer` for an output that was not enabled now says so, and `InstanceGeometry` rejects out-of-range `particle_type_ids` when it is created instead of in `run()`
+- Invalid values for `Simulation.stokes_vector`, `max_nested_geometry_levels`, `direction_healpix_nside` and `length_unit` raise `ValueError` instead of `RuntimeError`
 
 ## 1.0.2 - 18-03-2026
 

@@ -41,7 +41,7 @@ void Simulation::setGeometry(std::shared_ptr<IGeometry> geometry)
 {
     if (!geometry)
     {
-        throw std::invalid_argument("Geometry pointer must not be null");
+        throw std::invalid_argument("Simulation.geometry must not be None");
     }
 
     if (geometry_ != geometry)
@@ -61,7 +61,7 @@ std::shared_ptr<IGeometry> Simulation::getGeometry() const
 {
     if (!geometry_)
     {
-        throw std::runtime_error("Geometry not set");
+        throw std::runtime_error("Simulation.geometry is not set");
     }
     return geometry_;
 }
@@ -83,7 +83,7 @@ float Simulation::computeLengthScaleFactor() const
     }
     else
     {
-        throw std::runtime_error("Invalid length unit");
+        throw std::invalid_argument("Invalid length unit");
     }
 }
 
@@ -117,7 +117,7 @@ void Simulation::setRayGenerator(std::shared_ptr<IRayGenerator> generator)
 {
     if (!generator)
     {
-        throw std::invalid_argument("Ray generator must not be null");
+        throw std::invalid_argument("Simulation.ray_generator must not be None");
     }
     rayGenerator_ = std::move(generator);
 }
@@ -131,28 +131,28 @@ void Simulation::setStokesVector(const float4 &stokesVector)
 {
     if (stokesVector.x != 1.0f)
     {
-        throw std::runtime_error("Error: Stokes vector I must be 1.0f");
+        throw std::invalid_argument("stokes_vector: I must be 1");
     }
     if ((stokesVector.y < -1.0f || stokesVector.y > 1.0f) ||
         (stokesVector.z < -1.0f || stokesVector.z > 1.0f) ||
         (stokesVector.w < -1.0f || stokesVector.w > 1.0f))
     {
-        throw std::runtime_error("Error: Stokes vector Q, U, V must be in the range [-1.0f, 1.0f]");
+        throw std::invalid_argument("stokes_vector: Q, U and V must be in [-1, 1]");
     }
     if (stokesVector.y * stokesVector.y +
             stokesVector.z * stokesVector.z +
             stokesVector.w * stokesVector.w >
         1.0f)
     {
-        throw std::runtime_error("Error: The degree of polarization (sqrt(Q^2 + U^2 + V^2)) must be <= I");
+        throw std::invalid_argument("stokes_vector: the degree of polarization sqrt(Q^2 + U^2 + V^2) must be <= I");
     }
     if ((std::isnan(stokesVector.y) || std::isnan(stokesVector.z)) && stokesVector.w != 0.0f)
     {
-        throw std::runtime_error("Error: Stokes vector V cannot be non-zero for random linear polarization");
+        throw std::invalid_argument("stokes_vector: V must be 0 for a random linear polarization (Q or U nan)");
     }
     if (std::isnan(stokesVector.w) && (stokesVector.y != 0.0f || stokesVector.z != 0.0f))
     {
-        throw std::runtime_error("Error: Stokes vector Q and U cannot be non-zero for random circular polarization");
+        throw std::invalid_argument("stokes_vector: Q and U must be 0 for a random circular polarization (V nan)");
     }
     stokesVector_ = stokesVector;
 }
@@ -172,7 +172,7 @@ void Simulation::setMaxNestedGeometryLevels(uint32_t maxNestedGeometryLevels)
     const uint32_t maxTraversableGraphDepth = backend_->getMaxTraversableGraphDepth();
     if (maxNestedGeometryLevels < 1 || maxNestedGeometryLevels > maxTraversableGraphDepth)
     {
-        throw std::runtime_error("Error: maxNestedGeometryLevels must be in the range [1, " + std::to_string(maxTraversableGraphDepth) + "]");
+        throw std::invalid_argument("max_nested_geometry_levels must be in [1, " + std::to_string(maxTraversableGraphDepth) + "]");
     }
     maxNestedGeometryLevels_ = maxNestedGeometryLevels;
 }
@@ -257,7 +257,7 @@ void Simulation::setDirectionHealpixNside(uint32_t nside)
     // nside must be a power of 2
     if (nside > 0 && (nside & (nside - 1)) != 0)
     {
-        throw std::runtime_error("Error: healpix_miss_nside must be a power of 2");
+        throw std::invalid_argument("direction_healpix_nside must be a power of 2");
     }
     healpixMissNside_ = nside;
     buffersDirty_ = true;
@@ -269,7 +269,7 @@ void Simulation::updateHealpixBufferShape()
 
     if (numberOfHealpixBins > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()))
     {
-        throw std::runtime_error("healpix_miss_nside is too large for 32-bit Healpix bins");
+        throw std::invalid_argument("direction_healpix_nside is too large for 32-bit HEALPix bins");
     }
 
     const size_t elementCount = static_cast<size_t>(numberOfHealpixBins);
@@ -295,15 +295,15 @@ void Simulation::initializePipeline()
 {
     if (!geometry_)
     {
-        throw std::runtime_error("Geometry not set. Call setGeometry() first.");
+        throw std::runtime_error("Simulation.geometry is not set");
     }
     if (materials_.empty())
     {
-        throw std::runtime_error("Materials not set. Call setMaterials() first.");
+        throw std::runtime_error("Simulation.materials is not set");
     }
     if (wavelengthUm_ <= 0.0f)
     {
-        throw std::runtime_error("Wavelength not set. Call setWavelengthUm() first.");
+        throw std::runtime_error("Simulation.wavelength_um must be set to a value > 0");
     }
     backend_->initializePipeline(materials_, wavelengthUm_, maxNestedGeometryLevels_, randomNumberGenerator_);
 }
@@ -312,7 +312,7 @@ void Simulation::initializePipelineDensity()
 {
     if (!geometry_)
     {
-        throw std::runtime_error("Geometry not set. Call setGeometry() first.");
+        throw std::runtime_error("Simulation.geometry is not set");
     }
     backend_->initializeDensityPipeline(maxNestedGeometryLevels_, randomNumberGenerator_);
 }
@@ -322,19 +322,19 @@ void Simulation::allocateOutputBuffers(const uint3 launchShape)
     const uint64_t totalRays = static_cast<uint64_t>(launchShape.x) * launchShape.y * launchShape.z;
     if (totalRays == 0)
     {
-        throw std::runtime_error("Number of rays is zero. Call setNumberOfRays() first.");
+        throw std::runtime_error("The ray generator has no rays");
     }
 
     if (!rayTracingResult_)
     {
-        throw std::runtime_error("Output not configured. Call setRayOutput() first.");
+        throw std::runtime_error("Simulation.outputs is not set");
     }
 
     if (rayTracingResult_->isOutputEnabled(OutputType::DIRECTION_HISTOGRAM_HEALPIX))
     {
         if (healpixMissNside_ == 0)
         {
-            throw std::runtime_error("healpix_miss_nside must be > 0 when MISS_HEALPIX_HISTOGRAM output is enabled");
+            throw std::runtime_error("Simulation.direction_healpix_nside must be > 0 for the DIRECTION_HISTOGRAM_HEALPIX output");
         }
         updateHealpixBufferShape();
     }
@@ -370,15 +370,15 @@ void Simulation::run()
 {
     if (!geometry_)
     {
-        throw std::runtime_error("Geometry not set. Call setGeometry() first.");
+        throw std::runtime_error("Simulation.geometry is not set");
     }
     if (materials_.empty())
     {
-        throw std::runtime_error("Materials not set. Call setMaterials() first.");
+        throw std::runtime_error("Simulation.materials is not set");
     }
     if (!rayGenerator_)
     {
-        throw std::runtime_error("Ray generator not set. Call setRayGenerator() first.");
+        throw std::runtime_error("Simulation.ray_generator is not set");
     }
     geometry_->validateMaterialIds(materials_.size());
     if (!backend_->hasPipeline() || pipelineDirty_)
@@ -470,7 +470,7 @@ float Simulation::calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t
 {
     if (!geometry_)
     {
-        throw std::runtime_error("Geometry not set. Call setGeometry() first.");
+        throw std::runtime_error("Simulation.geometry is not set");
     }
     if (!backend_->hasDensityPipeline())
     {
