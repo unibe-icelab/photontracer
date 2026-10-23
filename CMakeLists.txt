@@ -2,7 +2,13 @@ cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 
 # Build options
 option(PHOTONTRACER_BUILD_TESTS "Build tests" OFF)
-option(PHOTONTRACER_BUILD_OPTIX "Build the OptiX GPU backend (needs the CUDA toolkit and an NVIDIA GPU)" ON)
+# There is no CUDA on macOS
+if(APPLE)
+  set(PHOTONTRACER_OPTIX_DEFAULT OFF)
+else()
+  set(PHOTONTRACER_OPTIX_DEFAULT ON)
+endif()
+option(PHOTONTRACER_BUILD_OPTIX "Build the OptiX GPU backend (needs the CUDA toolkit and an NVIDIA GPU)" ${PHOTONTRACER_OPTIX_DEFAULT})
 option(PHOTONTRACER_BUILD_EMBREE "Build the Embree CPU backend (needs TBB)" ON)
 option(PHOTONTRACER_USE_FASTMATH
        "Compile the CUDA kernels and the physics of the Embree backend with fast math (faster, less IEEE-754-precise)" ON)
