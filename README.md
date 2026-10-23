@@ -96,7 +96,9 @@ pip install . -C cmake.define.PHOTONTRACER_BUILD_OPTIX=OFF
 `Simulation()` uses OptiX if the build contains it and a CUDA device is available, and Embree otherwise. Falling back to Embree in a build with OptiX, e.g. a wheel from PyPI on a machine without an NVIDIA GPU, emits a `RuntimeWarning`. Choose one explicitly with the `backend` argument, and list those of the build with `available_backends()`:
 
 ```python
-sim = photontracer.Simulation(backend=photontracer.Backend.EMBREE, cpu_threads=8)
+import photontracer as phtr
+
+sim = phtr.Simulation(backend=phtr.Backend.EMBREE, cpu_threads=8)
 ```
 
 `cpu_threads=0` (the default) uses all cores. The Embree backend supports only the PCG32 generator. Instances can be nested up to the CMake setting `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` (default 4); `Simulation.max_nested_geometry_levels` is limited to that plus one.
@@ -118,7 +120,7 @@ releases used, and for scenes with little physics per ray this is most of the ru
 curand again, set it on the simulation (OptiX only):
 
 ```python
-sim.random_number_generator = photontracer.RandomNumberGenerator.MRG32K3A
+sim.random_number_generator = phtr.RandomNumberGenerator.MRG32K3A
 ```
 
 Both generators give the same results statistically, but not ray by ray, so a seed only reproduces
@@ -126,11 +128,11 @@ a run with the same generator (and the same build).
 
 ## Usage
 
-Refer to the example jupyter notebooks in `examples/` and the docstrings of the Python objects.
+Refer to the example jupyter notebooks in `examples/` (`minimal.py` is the shortest) and the docstrings of the Python objects. The examples and the snippets in this file import the package as `phtr`, so that typing `phtr.` offers every class and function of the package in an IDE.
 
 ### Output messages
 
-The library is quiet by default. To see which device is used and how long compiling and launching take, call `photontracer.set_verbose(True)`.
+The library is quiet by default. To see which device is used and how long compiling and launching take, call `phtr.set_verbose(True)`.
 
 ### Oblique beams
 
@@ -138,7 +140,7 @@ By default the source disk of a `ParallelRayGenerator` is perpendicular to the b
 
 ```python
 angle = np.radians(60)
-gen = photontracer.ParallelRayGenerator(
+gen = phtr.ParallelRayGenerator(
     number_of_rays=1_000_000,
     origin=[0, 0, -10],                              # centre of the source disk, in front of the surface
     direction=[np.sin(angle), 0, np.cos(angle)],     # beam 60 degrees from the surface normal (z)
