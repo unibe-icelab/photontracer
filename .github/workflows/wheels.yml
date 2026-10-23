@@ -94,12 +94,12 @@ jobs:
       - name: Set a development version
         if: github.event_name != 'release'
         shell: bash
-        run: sed -i -E 's/^version = "([^"]+)"/version = ".dev${{ github.run_number }}"/' pyproject.toml
+        run: sed -i -E 's/^version = "([^"]+)"/version = "\1.dev${{ github.run_number }}"/' pyproject.toml
       - name: Check that the release tag matches the version
         if: github.event_name == 'release'
         shell: bash
         run: |
-          version=$(sed -n -E 's/^version = "([^"]+)"//p' pyproject.toml)
+          version=$(sed -n -E 's/^version = "([^"]+)"/\1/p' pyproject.toml)
           if [ "${{ github.event.release.tag_name }}" != "v$version" ]; then
             echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
             exit 1
