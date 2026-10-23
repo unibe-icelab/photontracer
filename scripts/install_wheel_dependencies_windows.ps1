@@ -9,7 +9,8 @@ $Src = Join-Path $env:TEMP "onetbb"
 if (Test-Path $Src) { Remove-Item -Recurse -Force $Src }
 git clone --depth 1 --branch $TbbVersion https://github.com/uxlfoundation/oneTBB.git $Src
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
-cmake -S $Src -B "$Src\build" -DCMAKE_INSTALL_PREFIX="$Prefix" -DTBB_TEST=OFF -DTBB_EXAMPLES=OFF
+# A single-configuration generator (Ninja) ignores --config and would build a debug TBB
+cmake -S $Src -B "$Src\build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$Prefix" -DTBB_TEST=OFF -DTBB_EXAMPLES=OFF
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 cmake --build "$Src\build" --config Release --parallel
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
