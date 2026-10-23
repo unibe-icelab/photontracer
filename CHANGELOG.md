@@ -2,44 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
-## 1.1.x - Unreleased
+## 1.1.0 - Unreleased
 
-- Add Changelog file
-- Add CI workflow that compiles the OptiX build without a GPU
-- Run the CI checks for PRs and pushes to the dev branch
-- Add `benchmarks/benchmark.py` for timing synthetic scenes and comparing against a stored baseline
-- Fix crash when a `Simulation` is used after another one has been destroyed (the destructor reset the whole CUDA device)
+### Breaking changes
+
+- Results agree with the 1.0 releases statistically but not ray by ray: the OptiX kernels use PCG32 instead of curand's MRG32k3a by default, which makes scenes with little physics per ray far faster and heavy ones about 15% faster, and `DIFFUSE` surfaces sample their directions with Malley's method
+- Require Python 3.9 or newer, and declare `numpy` as a dependency
+- Remove the `LOGS` and `LOG_OFFSETS` outputs and the CMake option `ENABLE_DEBUG_PRINT_KERNEL`; the new ray trace replaces them
+- Print progress messages (device in use, compile and launch times) only after `photontracer.set_verbose(True)`
 - Reject more than 16 materials, instance material IDs outside the configured materials, and mesh scenes with fewer than 2 materials; before, these silently absorbed rays or wrote past a fixed-size array
-- Fix the debug-build bounds checks, which rejected the valid material ID 15
-- Move the OptiX context and pipelines from `Simulation` into an OptiX raytracing backend behind a new `IRaytracingBackend` interface; the Python API and the results are unchanged
-- Add `benchmarks/golden.py` to check that two builds produce identical output
-- Make the physics (`light_scattering`, `complex_f`, material interaction, ray generation) host-compilable in portable headers, and add CPU-only tests (`runHostTests`) that run without a GPU
-- Allocate and copy the output buffers through the raytracing backend instead of calling CUDA from `Simulation`
-- Move the OptiX acceleration structures out of the geometry classes into the OptiX backend, which also fixes a crash when two simulations share one geometry
-- Add the CMake option `PHOTONTRACER_BUILD_OPTIX` (default on); with it off, CUDA is not needed and only the CPU tests are built. A CI job runs them without a GPU
-- Use PCG32 as the default random number generator of the OptiX kernels. It is much cheaper to seed than curand's MRG32k3a, which makes scenes with little physics per ray far faster and heavy ones about 15% faster. Results agree statistically with the 1.0 releases but not ray by ray. `Simulation.random_number_generator` selects between `PCG32` and `MRG32K3A` (the curand generator of the 1.0 releases) at run time
-- Add statistical tests of the generator (Fresnel reflectance, diffuse albedo, uniformity of the isotropic source, seed reproducibility), and `--summary` / `--compare-summary` in `benchmarks/golden.py` to compare the statistics of two builds
-- Add an Embree backend that runs the simulation on the CPU with TBB, selected with the `backend` argument of `Simulation`. The new CMake option `PHOTONTRACER_BUILD_EMBREE` (default on) builds it, and `PHOTONTRACER_BUILD_OPTIX=OFF` builds the Python module without CUDA. `available_backends()` lists the backends of a build. It supports instances, nested up to `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` levels (default 4). It writes the `DIRECTION_HISTOGRAM_HEALPIX` output as well; only the `PCG32` generator is supported The AVX512 kernels of Embree are not built, to keep the build time down
-- Add `Simulation.trace_rays`, `max_trace_steps` and `get_trace()` to record the steps (positions, directions, media, Stokes vector, event) of up to 256 chosen rays on both backends. Untraced launches run a kernel without the recording code
-- Remove the `LOGS` and `LOG_OFFSETS` outputs and the CMake option `ENABLE_DEBUG_PRINT_KERNEL`. They needed 1 MiB per ray, only worked in a special debug build and were not documented; the ray trace replaces them
-- Print progress messages (device in use, compile and launch times) only after `photontracer.set_verbose(True)`; before, they were always printed
-- Declare `numpy` as a dependency of the package, and require Python 3.9 or newer. The CPU CI job tests Python 3.9 and 3.13
-- Add the CMake option `PHOTONTRACER_USE_FASTMATH` (default on). Off compiles the CUDA kernels without `--use_fast_math` and the Embree physics without `-ffast-math`. With it on, the physics of the Embree backend is now compiled with `-ffast-math -fno-finite-math-only` (NaN encodes the random polarization, so finite-math-only has to stay off)
-- Compact mesh acceleration structures after building, controlled by the new `compact` argument of `MeshGeometry` (default on)
-- Add `DiffuseRayGenerator`, a disk source emitting cosine-weighted directions around an axis to model diffuse illumination of a surface
-- Add the optional argument and property `disk_normal` to `ParallelRayGenerator`: the plane of the source disk, which is perpendicular to the beam by default. A disk parallel to the illuminated surface keeps the footprint of a tilted beam a circle of the same radius at every zenith angle, and the source can stay just in front of the surface
-- Add the `FIRST_POSITION` output: where each ray first interacted, at a surface or in a volume, and NaN for rays that left the scene without an interaction
-- Sample the directions of `DIFFUSE` surfaces with Malley's method (a lifted uniform disk point) instead of a random unit vector added to the normal: same distribution, but no `acosf` and extra trigonometry, and no `normalize` that can divide by zero. Results agree statistically with earlier builds but not ray by ray
-- Document the Python API in the bindings, so `help()` shows it, and generate `photontracer_bindings.pyi` from them with `scripts/generate_stubs.py`; CI fails if the committed stub is out of date. The documentation of the outputs now gives the codes of `RAY_STATE`, the frame of the Stokes vectors, the units and what `NUMBER_OF_WARNINGS` counts, and corrects several defaults that were wrong (`seed` is 42, `use_complex_fresnel` is on, `max_nested_geometry_levels` is 5)
-- Vector arguments (`Vector3`, `Vector4`) are converted by a type caster: a wrong number of values raises `ValueError` with a shorter message, and an argument of a wrong type a `TypeError` from pybind11 instead of one naming the argument. Vector properties still return tuples
-- Fix `ParallelRayGenerator.direction`, which was not normalised when set after construction
-- Name the Python attributes in error messages instead of the C++ functions (e.g. `Simulation.wavelength_um is not set` instead of `Call setWavelengthUm() first`). `get_output_buffer` for an output that was not enabled now says so, and `InstanceGeometry` rejects out-of-range `particle_type_ids` when it is created instead of in `run()`
-- Fix `Material(REFLECTIVE, reflectivity)` and `Material(REFRACTIVE, n)` with a real `n`, which raised `ValueError` because the `DIFFUSE` constructor took every `(type, number)` call; the reflectivity of a mirror without fuzziness is now checked to be in [0, 1] as well
-- Fix `calculate_volume_fraction()` discarding a pending rebuild of the ray tracing pipeline, so that e.g. a change of `random_number_generator` was ignored by the next `run()`
-- Invalid values for `Simulation.stokes_vector`, `max_nested_geometry_levels`, `direction_healpix_nside` and `length_unit` raise `ValueError` instead of `RuntimeError`
-- Update LICENSE with current affiliation of Rafael Ottersberg
-- Add a workflow that builds manylinux_2_28 wheels for Python 3.9 to 3.14 with cibuildwheel (CUDA 12.4, OptiX and Embree), tests the Embree backend and publishes development versions to TestPyPI. `PHOTONTRACER_TEST_BACKENDS` limits the Python tests to some backends
-- The wheel no longer contains the headers, static libraries and documentation of Embree and the OptiX Toolkit, and the Python module links `libcuda.so.1` only as needed, so it imports on machines without the NVIDIA driver
+- Invalid values for `Simulation.stokes_vector`, `max_nested_geometry_levels`, `direction_healpix_nside` and `length_unit` raise `ValueError` instead of `RuntimeError`. A vector argument with a wrong number of values raises `ValueError`, one of a wrong type a `TypeError`. `InstanceGeometry` rejects out-of-range `particle_type_ids` when it is created instead of in `run()`
+
+### Added
+
+- Embree backend that runs the simulation on the CPU, selected with the `backend` argument of `Simulation`; `available_backends()` lists the backends of a build. It supports meshes, instances nested up to `PHOTONTRACER_EMBREE_INSTANCE_LEVELS` levels (default 4) and the `DIRECTION_HISTOGRAM_HEALPIX` output, and only the `PCG32` generator
+- `Simulation.random_number_generator` to select `PCG32` or `MRG32K3A` (curand, OptiX only) at run time
+- `Simulation.trace_rays`, `max_trace_steps` and `get_trace()` to record the steps (positions, directions, media, Stokes vector, event) of up to 256 chosen rays on both backends
+- `DiffuseRayGenerator`, a disk source emitting cosine-weighted directions around an axis to model diffuse illumination of a surface
+- `disk_normal` argument and property of `ParallelRayGenerator`: the plane of the source disk, perpendicular to the beam by default. A disk parallel to the illuminated surface keeps the footprint of a tilted beam the same circle at every zenith angle
+- `FIRST_POSITION` output: where each ray first interacted, and NaN for rays that left the scene without an interaction
+- `compact` argument of `MeshGeometry` (default on) to compact the mesh acceleration structures after building
+- CMake options `PHOTONTRACER_BUILD_OPTIX` and `PHOTONTRACER_BUILD_EMBREE` (both default on; without OptiX, CUDA is not needed), and `PHOTONTRACER_USE_FASTMATH` (default on), which now also compiles the Embree physics with `-ffast-math -fno-finite-math-only`
+- Documentation of the Python API in `help()` and a type stub, `photontracer_bindings.pyi`. The outputs document the codes of `RAY_STATE`, the frame of the Stokes vectors, the units and what `NUMBER_OF_WARNINGS` counts. Error messages name the Python attributes instead of the C++ functions
+
+### Fixed
+
+- Crash when a `Simulation` is used after another one has been destroyed (the destructor reset the whole CUDA device)
+- Crash when two simulations share one geometry
+- Debug-build bounds checks rejecting the valid material ID 15
+- `ParallelRayGenerator.direction` not being normalised when set after construction
+- `Material(REFLECTIVE, reflectivity)` and `Material(REFRACTIVE, n)` with a real `n` raising `ValueError`; the reflectivity of a mirror without fuzziness is now checked to be in [0, 1]
+- `calculate_volume_fraction()` discarding a pending rebuild of the ray tracing pipeline, so that e.g. a change of geometry type or of `random_number_generator` was ignored by the next `run()`
+- Wrong defaults in the documentation (`seed` is 42, `use_complex_fresnel` is on, `max_nested_geometry_levels` is 5)
+- The wheel containing the headers, static libraries and documentation of Embree and the OptiX Toolkit, and, when built without `--as-needed`, requiring `libcuda.so.1` to import the module
+
+### Internal
+
+- The OptiX context, pipelines, acceleration structures and output buffers moved from `Simulation` and the geometries into an OptiX backend behind an `IRaytracingBackend` interface
+- The physics is host-compilable, with CPU-only tests (`runHostTests`) and statistical tests of the generator
+- `benchmarks/benchmark.py` for timing, `benchmarks/golden.py` to compare the output or statistics of two builds
+- CI compiles the OptiX build without a GPU, runs the CPU tests for Python 3.9 and 3.13, and checks that the committed stub is up to date (`scripts/generate_stubs.py`)
+- A workflow builds manylinux_2_28 wheels for Python 3.9 to 3.14 with cibuildwheel (CUDA 12.4, OptiX and Embree), tests the Embree backend and publishes development versions to TestPyPI. `PHOTONTRACER_TEST_BACKENDS` limits the Python tests to some backends
+- Add this changelog, and update LICENSE with the current affiliation of Rafael Ottersberg
 
 ## 1.0.2 - 18-03-2026
 
