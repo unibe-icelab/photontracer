@@ -72,7 +72,7 @@ public:
     void setOrigin(const float3 &origin) { origin_ = origin; }
 
     float3 getDirection() const { return direction_; }
-    void setDirection(const float3 &direction) { direction_ = direction; }
+    void setDirection(const float3 &direction) { direction_ = otk::normalize(direction); }
 
     float getOffsetRadius() const { return offsetRadius_; }
     void setOffsetRadius(float radius) { offsetRadius_ = radius; }
