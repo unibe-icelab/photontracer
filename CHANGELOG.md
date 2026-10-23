@@ -30,6 +30,9 @@ All notable changes to this project will be documented in this file.
 - Add the optional argument and property `disk_normal` to `ParallelRayGenerator`: the plane of the source disk, which is perpendicular to the beam by default. A disk parallel to the illuminated surface keeps the footprint of a tilted beam a circle of the same radius at every zenith angle, and the source can stay just in front of the surface
 - Add the `FIRST_POSITION` output: where each ray first interacted, at a surface or in a volume, and NaN for rays that left the scene without an interaction
 - Sample the directions of `DIFFUSE` surfaces with Malley's method (a lifted uniform disk point) instead of a random unit vector added to the normal: same distribution, but no `acosf` and extra trigonometry, and no `normalize` that can divide by zero. Results agree statistically with earlier builds but not ray by ray
+- Document the Python API in the bindings, so `help()` shows it, and generate `photontracer_bindings.pyi` from them with `scripts/generate_stubs.py`; CI fails if the committed stub is out of date. The documentation of the outputs now gives the codes of `RAY_STATE`, the frame of the Stokes vectors, the units and what `NUMBER_OF_WARNINGS` counts, and corrects several defaults that were wrong (`seed` is 42, `use_complex_fresnel` is on, `max_nested_geometry_levels` is 5)
+- Vector arguments (`Vector3`, `Vector4`) are converted by a type caster: a wrong number of values raises `ValueError` with a shorter message, and an argument of a wrong type a `TypeError` from pybind11 instead of one naming the argument. Vector properties still return tuples
+- Fix `ParallelRayGenerator.direction`, which was not normalised when set after construction
 
 ## 1.0.2 - 18-03-2026
 

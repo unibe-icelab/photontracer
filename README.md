@@ -181,3 +181,14 @@ To test the Python module, complete integration tests are available in the `phot
 ```bash
 pytest photontracer/test
 ```
+
+## Python documentation
+
+The Python API is documented in the bindings (`src/photonTracer/photontracer_bindings.cpp`, and the longer texts in `photontracer_bindings_doc.h`), so `help()` shows it. The type stub `photontracer/photontracer_bindings.pyi` that IDEs read is generated from them; do not edit it by hand. After changing the bindings, install the package and regenerate the stub:
+
+```bash
+pip install pybind11-stubgen==3.0.0
+python scripts/generate_stubs.py
+```
+
+CI checks that the committed stub is up to date with `python scripts/generate_stubs.py --check`.

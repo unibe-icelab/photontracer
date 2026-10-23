@@ -1021,6 +1021,13 @@ def test_disk_normal_can_be_changed_and_reset():
     assert np.allclose(gen.disk_normal, np.array([0, 1, 1]) / np.sqrt(2))
 
 
+def test_parallel_direction_is_normalised():
+    gen = ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 0], direction=[0, 0, -2], offset_radius=1)
+    assert np.allclose(gen.direction, [0, 0, -1])
+    gen.direction = [3, 0, 4]
+    assert np.allclose(gen.direction, [0.6, 0, 0.8])
+
+
 def test_disk_normal_perpendicular_to_the_beam_is_rejected(backend):
     with pytest.raises(ValueError, match="disk_normal"):
         ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 0], direction=[0, 0, 1], offset_radius=1,
