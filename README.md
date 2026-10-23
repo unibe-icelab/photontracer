@@ -31,6 +31,18 @@ The Embree backend runs on any x86-64 CPU and needs no GPU.
 
 ## Installation
 
+### From PyPI
+
+Wheels for Linux (x86-64, glibc 2.28 or newer, as on Ubuntu 20.04+, Debian 10+ and RHEL 8+) and Python 3.9 to 3.14 are available:
+
+```bash
+pip install photontracer
+```
+
+One wheel contains both backends. The OptiX backend needs an NVIDIA GPU and display driver 535 or newer; it loads the driver at run time, so the wheel works without CUDA installed. On a machine without a CUDA device `Simulation()` uses the Embree backend and emits a warning. For other platforms, build from source.
+
+### Build from source
+
 The following build tools are required to compile photontracer:
 
 - C++ compiler (GCC 11+ on Linux, MSVC on Windows)
@@ -56,14 +68,14 @@ The NVIDIA OptiX SDK is required to compile the simulation. It is bundeled as a 
 
 Embree 4 is bundled as a submodule and built together with photontracer.
 
-### Clone the repository in a directory of choice including submodules
+#### Clone the repository in a directory of choice including submodules
 
 ```bash
 git clone --recurse-submodules https://github.com/unibe-icelab/photontracer.git
 cd photontracer
 ```
 
-### Build and install the Python package
+#### Build and install the Python package
 
 Activate your virtual Python environment. For example the one created with the env with conda-forge/Miniforge3.
 
