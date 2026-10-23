@@ -6,6 +6,11 @@ set -euo pipefail
 CUDA_VERSION=12-4
 TBB_VERSION=v2023.1.0
 
+# In CI, the compiler cache of the host (a static binary) is mounted at /host
+if [ -n "${SCCACHE_PATH:-}" ] && [ -x "/host${SCCACHE_PATH}" ]; then
+    ln -sf "/host${SCCACHE_PATH}" /usr/local/bin/sccache
+fi
+
 # CUDA 12.4 supports GCC up to 13; nvcc uses it as host compiler through CUDAHOSTCXX
 dnf install -y dnf-plugins-core gcc-toolset-13-gcc-c++
 

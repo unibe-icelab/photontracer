@@ -37,9 +37,17 @@ jobs:
             echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
             exit 1
           fi
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: pypa/cibuildwheel@v3.4.1
         env:
           CIBW_BUILD: ${{ matrix.python }}-manylinux_x86_64
+          # The build runs in a container; it gets the cache credentials and uses the sccache binary of
+          # the host (mounted at /host), see scripts/install_wheel_dependencies.sh
+          CIBW_ENVIRONMENT_PASS_LINUX: SCCACHE_PATH SCCACHE_GHA_ENABLED ACTIONS_CACHE_URL ACTIONS_RESULTS_URL ACTIONS_RUNTIME_TOKEN CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER CMAKE_CUDA_COMPILER_LAUNCHER
+          SCCACHE_GHA_ENABLED: "true"
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+          CMAKE_CUDA_COMPILER_LAUNCHER: sccache
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.python }}
@@ -67,9 +75,13 @@ jobs:
             echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
             exit 1
           fi
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: pypa/cibuildwheel@v3.4.1
         env:
           CIBW_BUILD: ${{ matrix.python }}-macosx_arm64
+          SCCACHE_GHA_ENABLED: "true"
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.python }}-macos
@@ -104,9 +116,17 @@ jobs:
             echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
             exit 1
           fi
+      # Ninja needs the MSVC environment; the Visual Studio generator ignores compiler launchers
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: pypa/cibuildwheel@v3.4.1
         env:
           CIBW_BUILD: ${{ matrix.python }}-win_amd64
+          SCCACHE_GHA_ENABLED: "true"
+          CMAKE_GENERATOR: Ninja
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+          CMAKE_CUDA_COMPILER_LAUNCHER: sccache
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.python }}-windows
