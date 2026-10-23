@@ -59,6 +59,8 @@ before-all = "bash {project}/scripts/install_wheel_dependencies.sh"
 environment = { CUDACXX = "/usr/local/cuda-12.4/bin/nvcc", CUDAHOSTCXX = "/opt/rh/gcc-toolset-13/root/usr/bin/g++" }
 # The driver libraries come with the user's driver and must never be bundled
 repair-wheel-command = "auditwheel repair --exclude libcuda.so.1 --exclude libnvoptix.so.1 -w {dest_dir} {wheel}"
+# Cache statistics of the build; the sccache of CI lives in the container, only there they are non-zero
+before-test = "sccache --show-stats || true"
 
 # There is no CUDA on the Mac; the wheels contain the Embree CPU backend only
 [tool.cibuildwheel.macos]

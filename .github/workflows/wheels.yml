@@ -41,10 +41,12 @@ jobs:
       - uses: pypa/cibuildwheel@v3.4.1
         env:
           CIBW_BUILD: ${{ matrix.python }}-manylinux_x86_64
-          # The build runs in a container; it gets the cache credentials and uses the sccache binary of
-          # the host (mounted at /host), see scripts/install_wheel_dependencies.sh
-          CIBW_ENVIRONMENT_PASS_LINUX: SCCACHE_PATH SCCACHE_GHA_ENABLED ACTIONS_CACHE_URL ACTIONS_RESULTS_URL ACTIONS_RUNTIME_TOKEN CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER CMAKE_CUDA_COMPILER_LAUNCHER
+          # The build runs in a container with its own sccache (installed by
+          # scripts/install_wheel_dependencies.sh), which needs the cache credentials of the runner
+          CIBW_ENVIRONMENT_PASS_LINUX: SCCACHE_GHA_ENABLED SCCACHE_IDLE_TIMEOUT SCCACHE_IGNORE_SERVER_IO_ERROR ACTIONS_CACHE_URL ACTIONS_CACHE_SERVICE_V2 ACTIONS_RESULTS_URL ACTIONS_RUNTIME_TOKEN CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER CMAKE_CUDA_COMPILER_LAUNCHER
           SCCACHE_GHA_ENABLED: "true"
+          SCCACHE_IDLE_TIMEOUT: "0"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
           CMAKE_CUDA_COMPILER_LAUNCHER: sccache
@@ -80,6 +82,8 @@ jobs:
         env:
           CIBW_BUILD: ${{ matrix.python }}-macosx_arm64
           SCCACHE_GHA_ENABLED: "true"
+          SCCACHE_IDLE_TIMEOUT: "0"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
       - uses: actions/upload-artifact@v4
@@ -123,6 +127,10 @@ jobs:
         env:
           CIBW_BUILD: ${{ matrix.python }}-win_amd64
           SCCACHE_GHA_ENABLED: "true"
+          # The cache must never fail the build: no idle shutdown of the server during the long Embree
+          # compiles, and a lost connection falls back to compiling directly
+          SCCACHE_IDLE_TIMEOUT: "0"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
           CMAKE_GENERATOR: Ninja
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
