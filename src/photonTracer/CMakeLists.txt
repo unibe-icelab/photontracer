@@ -104,8 +104,18 @@ pybind11_add_module(photontracer_bindings
   backend_factory.cpp
 )
 
+# The wheel installs only this component; Embree and the OptiX Toolkit would add their headers,
+# static libraries and documentation
 install(TARGETS photontracer_bindings
-        LIBRARY DESTINATION photontracer)
+        LIBRARY DESTINATION photontracer
+        COMPONENT photontracer)
+
+# The static CUDA runtime loads libcuda.so.1 at run time, but the OptiX Toolkit targets also put
+# libcuda and the shared libcudart on the link line. Without --as-needed (the default on Ubuntu but
+# not in the manylinux images) both would be required to import the module.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(photontracer_bindings PRIVATE -Wl,--as-needed)
+endif()
 
 if(PHOTONTRACER_BUILD_OPTIX)
   otk_target_options(photontracer_bindings)

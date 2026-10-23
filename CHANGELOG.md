@@ -38,6 +38,8 @@ All notable changes to this project will be documented in this file.
 - Fix `calculate_volume_fraction()` discarding a pending rebuild of the ray tracing pipeline, so that e.g. a change of `random_number_generator` was ignored by the next `run()`
 - Invalid values for `Simulation.stokes_vector`, `max_nested_geometry_levels`, `direction_healpix_nside` and `length_unit` raise `ValueError` instead of `RuntimeError`
 - Update LICENSE with current affiliation of Rafael Ottersberg
+- Add a workflow that builds manylinux_2_28 wheels for Python 3.9 to 3.14 with cibuildwheel (CUDA 12.4, OptiX and Embree), tests the Embree backend and publishes development versions to TestPyPI. `PHOTONTRACER_TEST_BACKENDS` limits the Python tests to some backends
+- The wheel no longer contains the headers, static libraries and documentation of Embree and the OptiX Toolkit, and the Python module links `libcuda.so.1` only as needed, so it imports on machines without the NVIDIA driver
 
 ## 1.0.2 - 18-03-2026
 
