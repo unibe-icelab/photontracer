@@ -135,6 +135,17 @@ PT_INLINE PT_HD void writeMainTraceOutputs(
     }
 }
 
+/// Writes where the first step of a ray ended, at a surface or in a volume. A ray that left the scene
+/// without an interaction gets NaN.
+PT_INLINE PT_HD void writeFirstPosition(uint32_t outputFlags, const DeviceOutputBuffers &out, uint32_t idx, const RayData &after)
+{
+    if (outputFlags & OUT_FIRST_POSITION)
+    {
+        const bool escaped = after.state.done && after.state.absorbed == 0;
+        out.firstPosition[idx] = escaped ? make_float3(NAN, NAN, NAN) : after.origin;
+    }
+}
+
 /// Slot of a ray in the trace buffers, or -1 if it is not traced
 PT_INLINE PT_HD int findTraceSlot(const TraceParams &trace, uint32_t ray)
 {

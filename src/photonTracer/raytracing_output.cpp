@@ -28,6 +28,7 @@ RayTracingOutput::RayTracingOutput()
         {OutputType::SCATTERING_ANGLE, "scatteringAngle", sizeof(float), BufferDescriptor::ElementType::Float, false},
         {OutputType::Q_MINUS_AXIS_IN, "qMinusAxisIn", sizeof(float3), BufferDescriptor::ElementType::Float3, false},
         {OutputType::DIRECTION_HISTOGRAM_HEALPIX, "directionHistogramHealpix", sizeof(uint32_t), BufferDescriptor::ElementType::UInt32, false, 0, true},
+        {OutputType::FIRST_POSITION, "firstPosition", sizeof(float3), BufferDescriptor::ElementType::Float3, false},
     };
 
     const auto expectedSize = static_cast<size_t>(OutputType::OUTPUT_TYPE_COUNT);

@@ -155,6 +155,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .value("SCATTERING_ANGLE", OutputType::SCATTERING_ANGLE)
         .value("Q_MINUS_AXIS_IN", OutputType::Q_MINUS_AXIS_IN)
         .value("DIRECTION_HISTOGRAM_HEALPIX", OutputType::DIRECTION_HISTOGRAM_HEALPIX)
+        .value("FIRST_POSITION", OutputType::FIRST_POSITION)
         .export_values();
 
     // Bind RefractiveIndex with support for Python complex numbers.

@@ -220,6 +220,11 @@ static __forceinline__ __device__ void raygenLight()
 
         traceRay(params.handle, prd, 0.0f, 1e16f);
 
+        if (scatteringCount == 0)
+        {
+            writeFirstPosition(params.outputFlags, params.deviceOutputBuffers, idx, prd);
+        }
+
         if constexpr (Trace)
         {
             if (traceSlot >= 0)

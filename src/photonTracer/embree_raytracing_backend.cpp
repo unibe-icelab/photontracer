@@ -153,6 +153,10 @@ void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupD
                 countEscapedDirection(params, prd.direction, launchIndex, launchShape);
             }
             prd.state.done = true;
+            if (scatteringCount == 0)
+            {
+                writeFirstPosition(params.outputFlags, params.deviceOutputBuffers, idx, prd);
+            }
             if (traceSlot >= 0)
             {
                 recordTraceEnd(params.trace, traceSlot, scatteringCount, prd, TRACE_ESCAPED);
@@ -177,6 +181,11 @@ void traceLightRay(const EmbreeAccelerationStructure &structure, const HitGroupD
         }
 
         handleMaterialHit(ctx, hit, hitGroup, params.lengthScale, params.useComplexFresnel, nextSample);
+
+        if (scatteringCount == 0)
+        {
+            writeFirstPosition(params.outputFlags, params.deviceOutputBuffers, idx, prd);
+        }
 
         if (traceSlot >= 0)
         {

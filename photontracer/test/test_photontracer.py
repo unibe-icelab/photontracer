@@ -637,6 +637,33 @@ def _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10), rays=100
     return {o: sim.get_output_buffer(o) for o in sim.outputs}
 
 
+def _first_position_on_slab(backend, origin):
+    # A glass slab with its top at z = 0; the rays go on after the first hit
+    slab = trimesh.creation.box(extents=[10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim = Simulation(backend=backend)
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j)]
+    sim.wavelength_um = 1.0
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=1000, origin=origin, direction=[0, 0, -1], offset_radius=0.05)
+    sim.outputs = [OutputType.FIRST_POSITION, OutputType.SCATTERING_COUNT]
+    sim.run()
+    return sim.get_output_buffer(OutputType.FIRST_POSITION), sim.get_output_buffer(OutputType.SCATTERING_COUNT)
+
+
+def test_first_position_is_the_first_hit(backend):
+    position, count = _first_position_on_slab(backend, origin=(1, 2, 10))
+    assert position.shape == (1000, 3)
+    assert (count >= 1).all()
+    assert np.allclose(position[:, 2], 0, atol=1e-4)
+    assert np.allclose(position[:, 0], 1, atol=0.06) and np.allclose(position[:, 1], 2, atol=0.06)
+
+
+def test_first_position_is_nan_for_a_ray_without_interaction(backend):
+    position, count = _first_position_on_slab(backend, origin=(20, 0, 10))
+    assert (count == 0).all()
+    assert np.isnan(position).all()
+
+
 def test_instance_is_placed_by_its_transform(backend):
     # An absorbing ball of radius 2 at x = 3 stops a beam at its top
     absorber = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.DIFFUSE, 0.0)]

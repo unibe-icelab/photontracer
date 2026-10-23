@@ -74,6 +74,7 @@ __all__ = [
     "SCATTERING_ANGLE",
     "Q_MINUS_AXIS_IN",
     "DIRECTION_HISTOGRAM_HEALPIX",
+    "FIRST_POSITION",
     "RefractiveIndex",
     "Diffuse",
     "Refractive",
@@ -361,6 +362,9 @@ class OutputType:
     * ``DIRECTION_HISTOGRAM_HEALPIX`` – ``uint32[npix]`` — histogram counting
       how many rays ended in each HEALPix pixel (requires
       :attr:`Simulation.direction_healpix_nside` > 0).
+    * ``FIRST_POSITION`` – ``float32[N, 3]`` — position of the first
+      interaction (at a surface or in a volume); NaN for rays that left the
+      scene without one.
     """
 
     LAST_DIRECTION: OutputType
@@ -377,6 +381,7 @@ class OutputType:
     SCATTERING_ANGLE: OutputType
     Q_MINUS_AXIS_IN: OutputType
     DIRECTION_HISTOGRAM_HEALPIX: OutputType
+    FIRST_POSITION: OutputType
     __members__: dict[str, OutputType]
 
     def __eq__(self, other: typing.Any) -> bool: ...
@@ -1260,6 +1265,7 @@ class Simulation:
             SCATTERING_ANGLE          float32     ``(N,)``
             Q_MINUS_AXIS_IN           float32     ``(N, 3)``
             DIRECTION_HISTOGRAM_HEALPIX uint32    ``(npix,)``
+            FIRST_POSITION            float32     ``(N, 3)``
             ========================= =========== ==================
 
             where *N* is the number of rays and *npix* is the number of
@@ -1539,3 +1545,4 @@ SOURCE_POSITION: OutputType
 SCATTERING_ANGLE: OutputType
 Q_MINUS_AXIS_IN: OutputType
 DIRECTION_HISTOGRAM_HEALPIX: OutputType
+FIRST_POSITION: OutputType

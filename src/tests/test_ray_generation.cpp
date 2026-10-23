@@ -1,5 +1,6 @@
 // Ray sources, source polarization and HEALPix binning on the CPU, with scripted random numbers.
 
+#include <cmath>
 #include <initializer_list>
 #include <vector>
 
@@ -378,14 +379,14 @@ namespace
 {
 struct Buffers
 {
-    std::vector<float3> lastDirection, lastPosition, sourceDirection, sourcePosition, qMinusAxisIn;
+    std::vector<float3> lastDirection, lastPosition, sourceDirection, sourcePosition, qMinusAxisIn, firstPosition;
     std::vector<float4> stokes, stokesIn;
     std::vector<int> rayState, lastMedium;
     std::vector<uint32_t> warnings, scatteringCount;
     std::vector<double> opl;
     std::vector<float> angle;
 
-    Buffers() : lastDirection(1), lastPosition(1), sourceDirection(1), sourcePosition(1), qMinusAxisIn(1), stokes(1), stokesIn(1),
+    Buffers() : lastDirection(1), lastPosition(1), sourceDirection(1), sourcePosition(1), qMinusAxisIn(1), firstPosition(1), stokes(1), stokesIn(1),
                 rayState(1, -1), lastMedium(1, -1), warnings(1, 99), scatteringCount(1, 99), opl(1, -1.0), angle(1, -1.0f) {}
 
     DeviceOutputBuffers views()
@@ -396,6 +397,7 @@ struct Buffers
         out.sourceDirection = sourceDirection.data();
         out.sourcePosition = sourcePosition.data();
         out.qMinusAxisIn = qMinusAxisIn.data();
+        out.firstPosition = firstPosition.data();
         out.stokesVector = stokes.data();
         out.stokesVectorIn = stokesIn.data();
         out.ray_state = rayState.data();
@@ -477,6 +479,26 @@ TEST(LightTrace, WriteOutputsByFlag)
     EXPECT_DOUBLE_EQ(buffers.opl[0], 12.5);
     EXPECT_NEAR(buffers.angle[0], 3.14159265f, 1e-5); // straight back
     EXPECT_FLOAT_EQ(buffers.stokes[0].x, 0.0f);       // not requested, untouched
+}
+
+TEST(LightTrace, FirstPositionIsTheInteractionOrNan)
+{
+    Buffers buffers;
+    RayData prd{};
+    prd.origin = make_float3(4, 5, 6);
+
+    writeFirstPosition(OUT_FIRST_POSITION, buffers.views(), 0, prd);
+    expectNear(buffers.firstPosition[0], make_float3(4, 5, 6));
+
+    prd.state.absorbed = 1; // absorbed at the first hit
+    prd.state.done = 1;
+    writeFirstPosition(OUT_FIRST_POSITION, buffers.views(), 0, prd);
+    expectNear(buffers.firstPosition[0], make_float3(4, 5, 6));
+
+    prd.state.absorbed = 0;
+    writeFirstPosition(OUT_FIRST_POSITION, buffers.views(), 0, prd);
+    EXPECT_TRUE(std::isnan(buffers.firstPosition[0].x));
+    EXPECT_TRUE(std::isnan(buffers.firstPosition[0].z));
 }
 
 TEST(LightTrace, StokesOutputIsUnchangedWithoutAScatteringPlane)
