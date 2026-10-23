@@ -74,6 +74,7 @@ enum class OutputType
     SCATTERING_ANGLE = 11,            // float: angle between source direction and last direction
     Q_MINUS_AXIS_IN = 12,             // float3: Q- axis for the Stokes vector
     DIRECTION_HISTOGRAM_HEALPIX = 13, // uint32_t: histogram of scattered directions binned via HEALPix
+    FIRST_POSITION = 14,              // float3: position of the first interaction, NaN if there was none
 
     OUTPUT_TYPE_COUNT
 };
@@ -94,6 +95,7 @@ enum OutputFlags : uint32_t
     OUT_SCATTERING_ANGLE = 1u << static_cast<uint32_t>(OutputType::SCATTERING_ANGLE),
     OUT_Q_MINUS_AXIS_IN = 1u << static_cast<uint32_t>(OutputType::Q_MINUS_AXIS_IN),
     OUT_DIRECTION_HISTOGRAM_HEALPIX = 1u << static_cast<uint32_t>(OutputType::DIRECTION_HISTOGRAM_HEALPIX),
+    OUT_FIRST_POSITION = 1u << static_cast<uint32_t>(OutputType::FIRST_POSITION),
 };
 
 struct DeviceOutputBuffers
@@ -112,6 +114,7 @@ struct DeviceOutputBuffers
     float *scatteringAngle;              // Angle between source direction and last direction
     float3 *qMinusAxisIn;                // Q- axis for the Stokes vector of the source
     uint32_t *directionHistogramHealpix; // Histogram of miss directions (HEALPix bins)
+    float3 *firstPosition;               // Position of the first interaction of the ray
 };
 
 /// Index of a launch point in the output buffers

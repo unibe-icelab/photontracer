@@ -28,6 +28,7 @@ All notable changes to this project will be documented in this file.
 - Compact mesh acceleration structures after building, controlled by the new `compact` argument of `MeshGeometry` (default on)
 - Add `DiffuseRayGenerator`, a disk source emitting cosine-weighted directions around an axis to model diffuse illumination of a surface
 - Add the optional argument and property `disk_normal` to `ParallelRayGenerator`: the plane of the source disk, which is perpendicular to the beam by default. A disk parallel to the illuminated surface keeps the footprint of a tilted beam a circle of the same radius at every zenith angle, and the source can stay just in front of the surface
+- Add the `FIRST_POSITION` output: where each ray first interacted, at a surface or in a volume, and NaN for rays that left the scene without an interaction
 - Sample the directions of `DIFFUSE` surfaces with Malley's method (a lifted uniform disk point) instead of a random unit vector added to the normal: same distribution, but no `acosf` and extra trigonometry, and no `normalize` that can divide by zero. Results agree statistically with earlier builds but not ray by ray
 
 ## 1.0.2 - 18-03-2026
