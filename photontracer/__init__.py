@@ -119,21 +119,6 @@ __all__ = [
     'CameraRayGenerator',
 ]
 
-# With verbose output, flush stdout before running the simulation so that
-# jupyter notebooks display that the simulation is running
-_original_run = Simulation.run
-
-
-def _patched_run(self, *args, **kwargs):
-    if is_verbose():
-        import sys
-        print("Starting simulation")
-        sys.stdout.flush()
-    return _original_run(self, *args, **kwargs)
-
-
-Simulation.run = _patched_run
-
 try:
     __version__ = version("photontracer")
 except PackageNotFoundError:

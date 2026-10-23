@@ -72,6 +72,12 @@ jobs:
         run: ctest --test-dir build --output-on-failure
       - name: Python tests
         run: pytest photontracer/test
+      - name: Check that the Python stub is up to date
+        # pybind11-stubgen needs Python 3.10 or newer
+        if: matrix.python-version == '3.13'
+        run: |
+          pip install pybind11-stubgen==3.0.0
+          python scripts/generate_stubs.py --check
       - name: Cache statistics
         if: always()
         run: ccache --show-stats
