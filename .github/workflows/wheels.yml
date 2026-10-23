@@ -7,6 +7,7 @@ on:
       - pyproject.toml
       - scripts/install_wheel_dependencies.sh
       - scripts/install_wheel_dependencies_macos.sh
+      - scripts/install_wheel_dependencies_windows.ps1
   workflow_dispatch:
   # Publishing a GitHub release is the only way to upload to PyPI
   release:
@@ -73,9 +74,46 @@ jobs:
         with:
           name: wheel-${{ matrix.python }}-macos
           path: wheelhouse/*.whl
+  build-wheels-windows:
+    name: Build wheel (${{ matrix.python }}, Windows)
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [cp39, cp310, cp311, cp312, cp313, cp314]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install the CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.19
+        with:
+          cuda: 12.4.1
+          method: network
+          sub-packages: '["nvcc", "cudart", "visual_studio_integration", "curand_dev"]'
+      - name: Set a development version
+        if: github.event_name != 'release'
+        shell: bash
+        run: sed -i -E 's/^version = "([^"]+)"/version = ".dev${{ github.run_number }}"/' pyproject.toml
+      - name: Check that the release tag matches the version
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          version=$(sed -n -E 's/^version = "([^"]+)"//p' pyproject.toml)
+          if [ "${{ github.event.release.tag_name }}" != "v$version" ]; then
+            echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
+            exit 1
+          fi
+      - uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_BUILD: ${{ matrix.python }}-win_amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.python }}-windows
+          path: wheelhouse/*.whl
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [build-wheels, build-wheels-macos]
+    needs: [build-wheels, build-wheels-macos, build-wheels-windows]
     # Pull requests from forks get no token for trusted publishing
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -95,7 +133,7 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
   publish-pypi:
     name: Publish to PyPI
-    needs: [build-wheels, build-wheels-macos]
+    needs: [build-wheels, build-wheels-macos, build-wheels-windows]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     # The environment restricts the tags that may deploy and can require an approval, see the

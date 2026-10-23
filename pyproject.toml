@@ -67,3 +67,11 @@ before-all = "bash {project}/scripts/install_wheel_dependencies_macos.sh"
 environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", CMAKE_PREFIX_PATH = "/tmp/onetbb-install" }
 # delocate finds libtbb through DYLD_LIBRARY_PATH to bundle it
 repair-wheel-command = "DYLD_LIBRARY_PATH=/tmp/onetbb-install/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"
+
+# The wheels contain the OptiX and Embree backends, like on Linux
+[tool.cibuildwheel.windows]
+archs = ['AMD64']
+before-all = 'powershell -File {project}\scripts\install_wheel_dependencies_windows.ps1'
+environment = { CMAKE_PREFIX_PATH = 'C:\onetbb-install', CMAKE_BUILD_PARALLEL_LEVEL = '4' }
+# The driver DLLs come with the user's driver and must never be bundled
+repair-wheel-command = 'delvewheel repair --add-path C:\onetbb-install\bin --exclude nvcuda.dll --exclude nvoptix.dll -w {dest_dir} {wheel}'
