@@ -36,6 +36,7 @@ All notable changes to this project will be documented in this file.
 - `calculate_volume_fraction()` discarding a pending rebuild of the ray tracing pipeline, so that e.g. a change of geometry type or of `random_number_generator` was ignored by the next `run()`
 - Wrong defaults in the documentation (`seed` is 42, `use_complex_fresnel` is on, `max_nested_geometry_levels` is 5)
 - The wheel containing the headers, static libraries and documentation of Embree and the OptiX Toolkit, and, when built without `--as-needed`, requiring `libcuda.so.1` to import the module
+- Updated and fixed examples
 
 ### Internal
 
@@ -45,6 +46,7 @@ All notable changes to this project will be documented in this file.
 - CI compiles the OptiX build without a GPU, runs the CPU tests for Python 3.9 and 3.13, and checks that the committed stub is up to date (`scripts/generate_stubs.py`)
 - A workflow builds manylinux_2_28 wheels for Python 3.9 to 3.14 with cibuildwheel (CUDA 12.4, OptiX and Embree), tests the Embree backend and publishes development versions to TestPyPI
 - The Python tests skip the OptiX backend on a machine without a CUDA device
+- The examples and the README import the package as `import photontracer as phtr`, and the notebooks use `phtr.MaterialType.REFRACTIVE` and `phtr.Simulation(gpu_id=0)` throughout
 - Add this changelog, and update LICENSE with the current affiliation of Rafael Ottersberg
 
 ## 1.0.2 - 18-03-2026

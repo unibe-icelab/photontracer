@@ -6,4 +6,5 @@ scipy
 trimesh
 gsd
 tmm
+requests
 jupyter

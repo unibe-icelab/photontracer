@@ -1,7 +1,7 @@
 import numpy as np
-from photontracer import Simulation, Material, REFRACTIVE, ParallelRayGenerator, MeshGeometry, OutputType
-import photontracer
-print("PhotonTracer version:", photontracer.__version__)
+import photontracer as phtr
+
+print("PhotonTracer version:", phtr.__version__)
 
 wavelength = 0.6
 
@@ -29,25 +29,24 @@ faces = np.array([
 direction = np.array([0, 0, -1])
 origin = -direction * 200
 
-sim = Simulation(
-    gpu_id=0,
-    enable_validation_mode=True,
-    optix_logging_level=4)
+sim = phtr.Simulation()
 
-sim.geometry = MeshGeometry(vertices, faces)
+sim.geometry = phtr.MeshGeometry(vertices, faces)
 
-sim.number_of_rays = 1
-
-sim.materials = [Material(REFRACTIVE, 1+0j), Material(REFRACTIVE, 1.33+1e-6j)]
+sim.materials = [
+    phtr.Material(phtr.MaterialType.REFRACTIVE, 1+0j),  # vacuum
+    phtr.Material(phtr.MaterialType.REFRACTIVE, 1.33+1e-6j),  # water
+]
 sim.wavelength_um = wavelength
-sim.ray_generator = ParallelRayGenerator(
+sim.ray_generator = phtr.ParallelRayGenerator(
+    number_of_rays=1,
     origin=origin,
     direction=direction,
     offset_radius=0
 )
-sim.outputs = [OutputType.SCATTERING_COUNT]
+sim.outputs = [phtr.OutputType.SCATTERING_COUNT]
 
 sim.run()
 
-scattering_count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
+scattering_count = sim.get_output_buffer(phtr.OutputType.SCATTERING_COUNT)
 print(scattering_count.mean())
