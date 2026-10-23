@@ -475,7 +475,6 @@ float Simulation::calculateVolumeFraction(float3 boxMin, float3 boxMax, uint32_t
     if (!backend_->hasDensityPipeline())
     {
         initializePipelineDensity();
-        pipelineDirty_ = false;
     }
     if (previousGeometry_)
     {

@@ -98,7 +98,7 @@ class RandomNumberGenerator:
     
       PCG32 : PCG32, the default. Cheap to seed, which matters most for scenes with little physics per ray.
     
-      MRG32K3A : curand's MRG32k3a, the generator of the 1.0 releases, to reproduce their results ray by ray. OptiX only.
+      MRG32K3A : curand's MRG32k3a, the generator of the 1.0 releases. OptiX only.
     """
     MRG32K3A: typing.ClassVar[RandomNumberGenerator]
     PCG32: typing.ClassVar[RandomNumberGenerator]
@@ -602,6 +602,7 @@ class Material:
         from photontracer import Material, DIFFUSE, REFRACTIVE, VOLUME_SCATTERING
     
         m_diffuse  = Material(DIFFUSE, albedo=0.9)
+        m_mirror   = Material(REFLECTIVE, 0.95)
         m_glass    = Material(REFRACTIVE, 1.5+0j)
         m_ice      = Material(REFRACTIVE, 1.31+1e-9j)
         m_cloud    = Material(VOLUME_SCATTERING, 1.33+0j,
@@ -611,6 +612,11 @@ class Material:
     def __init__(self) -> None:
         """
         Create a material without parameters.
+        """
+    @typing.overload
+    def __init__(self, type: MaterialType, value: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create a material from one number: the albedo of a DIFFUSE material, the reflectivity of a REFLECTIVE material (a perfect mirror) or the real refractive index of a REFRACTIVE material.
         """
     @typing.overload
     def __init__(self, type: MaterialType, refractive_index: typing.SupportsComplex | typing.SupportsFloat | typing.SupportsIndex) -> None:
@@ -1114,7 +1120,8 @@ class Simulation:
         Release the device buffers held by the simulation.
         
         Frees the pipeline, the output buffers and the acceleration structures of
-        the geometry. :meth:`run` can be called again afterwards and builds them anew.
+        the geometry, and releases the geometry itself: assign :attr:`geometry`
+        again before the next :meth:`run`, which then builds everything anew.
         """
     def get_output_buffer(self, output_type: OutputType) -> numpy.ndarray:
         """
@@ -1324,10 +1331,14 @@ class Simulation:
         """
         Stokes vector ``[I, Q, U, V]`` of the source rays, default ``(1, 0, 0, 0)``.
         
-        ``I`` must be ``1``, and ``Q² + U² + V² ≤ 1``. ``nan`` for ``Q`` or ``U``
-        gives every ray a random linear polarization, ``nan`` for ``V`` a random
-        circular one. ``(1, 0, 0, 0)`` is unpolarized light, ``(1, 1, 0, 0)`` light
-        polarized along the Q+ axis.
+        ``I`` must be ``1``, and ``Q² + U² + V² ≤ 1``. ``(1, 0, 0, 0)`` is
+        unpolarized light, ``(1, 1, 0, 0)`` light polarized along the Q+ axis.
+        
+        Each ray can be given a random polarization instead:
+        ``(1, nan, nan, 0)`` is fully linearly polarized light at a random angle,
+        ``(1, 0, 0, nan)`` gives each ray ``V = cos(2πu)`` with ``u`` uniform in
+        ``[0, 1)``, i.e. a random ``V`` in ``[-1, 1]``. The other components must be
+        ``0``.
         
         Raises:
             ValueError: If the vector is not a valid Stokes vector.

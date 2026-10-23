@@ -110,6 +110,46 @@ struct type_caster<float4> : float_vector_caster<float4, 4>
 } // namespace detail
 } // namespace PYBIND11_NAMESPACE
 
+namespace
+{
+Material makeDiffuse(float albedo)
+{
+    if (albedo < 0.0f || albedo > 1.0f)
+    {
+        throw py::value_error("albedo must be in [0, 1], got " + std::to_string(albedo));
+    }
+    Material mat{};
+    mat.type = DIFFUSE;
+    mat.properties.diffuse.albedo = albedo;
+    return mat;
+}
+
+Material makeReflective(float reflectivity, float fuzziness)
+{
+    if (reflectivity < 0.0f || reflectivity > 1.0f)
+    {
+        throw py::value_error("reflectivity must be in [0, 1], got " + std::to_string(reflectivity));
+    }
+    if (fuzziness < 0.0f || fuzziness >= 1.0f)
+    {
+        throw py::value_error("fuzziness must be in [0, 1), got " + std::to_string(fuzziness));
+    }
+    Material mat{};
+    mat.type = REFLECTIVE;
+    mat.properties.reflective.reflectivity = reflectivity;
+    mat.properties.reflective.fuzziness = fuzziness;
+    return mat;
+}
+
+Material makeRefractive(RefractiveIndex refractiveIndex)
+{
+    Material mat{};
+    mat.type = REFRACTIVE;
+    mat.properties.refractive.refractiveIndex = refractiveIndex;
+    return mat;
+}
+} // namespace
+
 PYBIND11_MODULE(photontracer_bindings, m)
 {
     m.doc() = doc::module;
@@ -124,7 +164,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
         .value("PCG32", RandomNumberGenerator::PCG32,
                "PCG32, the default. Cheap to seed, which matters most for scenes with little physics per ray.")
         .value("MRG32K3A", RandomNumberGenerator::MRG32K3A,
-               "curand's MRG32k3a, the generator of the 1.0 releases, to reproduce their results ray by ray. OptiX only.")
+               "curand's MRG32k3a, the generator of the 1.0 releases. OptiX only.")
         .export_values();
 
     py::enum_<BackendType>(m, "Backend", "Where a Simulation traces its rays; pass one as backend to Simulation.")
@@ -286,17 +326,30 @@ PYBIND11_MODULE(photontracer_bindings, m)
     // Bind Material.
     py::class_<Material>(m, "Material", doc::Material)
         .def(py::init<>(), "Create a material without parameters.")
+        // A positional number for each type. It comes first: pybind11 stops at the first overload that
+        // matches, even if it throws, so the named overloads below would reject the other types.
+        .def(py::init([](MaterialType type, float value)
+                      {
+            switch (type) {
+            case DIFFUSE:
+                return makeDiffuse(value);
+            case REFLECTIVE:
+                return makeReflective(value, 0.0f);
+            case REFRACTIVE:
+                return makeRefractive(RefractiveIndex{value, 0.0f});
+            default:
+                throw py::value_error("A VOLUME_SCATTERING material needs refractive_index, scattering_coefficient and g");
+            } }),
+             py::arg("type"), py::arg("value"), py::pos_only(),
+             "Create a material from one number: the albedo of a DIFFUSE material, the reflectivity of a REFLECTIVE "
+             "material (a perfect mirror) or the real refractive index of a REFRACTIVE material.")
         // Constructor for REFRACTIVE material with complex refractive index
         .def(py::init([](MaterialType type, const std::complex<float> &refractive_index)
                       {
             if (type != REFRACTIVE) {
                 throw py::value_error("A complex refractive_index alone can only be used with the REFRACTIVE material type");
             }
-            Material mat;
-            mat.type = type;
-            mat.properties.refractive.refractiveIndex.r = refractive_index.real();
-            mat.properties.refractive.refractiveIndex.i = refractive_index.imag();
-            return mat; }),
+            return makeRefractive(RefractiveIndex{refractive_index.real(), refractive_index.imag()}); }),
              py::arg("type"), py::arg("refractive_index"),
              "Create a REFRACTIVE material from a complex refractive index, e.g. 1.5+0j.")
         // Constructor for VOLUME_SCATTERING material with complex refractive index, scattering coefficient, and asymetryParameter
@@ -320,13 +373,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
             if (type != DIFFUSE) {
                 throw py::value_error("albedo can only be used with the DIFFUSE material type");
             }
-            if (albedo < 0.0f || albedo > 1.0f) {
-                throw py::value_error("albedo must be in [0, 1], got " + std::to_string(albedo));
-            }
-            Material mat;
-            mat.type = type;
-            mat.properties.diffuse.albedo = albedo;
-            return mat; }),
+            return makeDiffuse(albedo); }),
              py::arg("type"), py::arg("albedo"), "Create a DIFFUSE material with an albedo in [0, 1].")
         // Constructor for REFLECTIVE material with reflectivity and fuzziness
         .def(py::init([](MaterialType type, float reflectivity, float fuzziness)
@@ -334,17 +381,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
             if (type != REFLECTIVE) {
                 throw py::value_error("reflectivity and fuzziness can only be used with the REFLECTIVE material type");
             }
-            if (reflectivity < 0.0f || reflectivity > 1.0f) {
-                throw py::value_error("reflectivity must be in [0, 1], got " + std::to_string(reflectivity));
-            }
-            if (fuzziness < 0.0f || fuzziness >= 1.0f) {
-                throw py::value_error("fuzziness must be in [0, 1), got " + std::to_string(fuzziness));
-            }
-            Material mat;
-            mat.type = type;
-            mat.properties.reflective.reflectivity = reflectivity;
-            mat.properties.reflective.fuzziness = fuzziness;
-            return mat; }),
+            return makeReflective(reflectivity, fuzziness); }),
              py::arg("type"), py::arg("reflectivity"), py::arg("fuzziness"),
              "Create a REFLECTIVE material with a reflectivity in [0, 1] and a fuzziness in [0, 1).")
         // Constructor for REFLECTIVE material with reflectivity only (fuzziness=0)
@@ -353,11 +390,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
             if (type != REFLECTIVE) {
                 throw py::value_error("reflectivity can only be used with the REFLECTIVE material type");
             }
-            Material mat;
-            mat.type = type;
-            mat.properties.reflective.reflectivity = reflectivity;
-            mat.properties.reflective.fuzziness = 0.0f; // Default fuzziness to 0
-            return mat; }),
+            return makeReflective(reflectivity, 0.0f); }),
              py::arg("type"), py::arg("reflectivity"), "Create a REFLECTIVE material that is a perfect mirror (fuzziness 0).")
         // Constructor for REFRACTIVE material with RefractiveIndex object
         .def(py::init([](MaterialType type, const RefractiveIndex &ri)
@@ -365,10 +398,7 @@ PYBIND11_MODULE(photontracer_bindings, m)
             if (type != REFRACTIVE) {
                 throw py::value_error("A RefractiveIndex can only be used with the REFRACTIVE material type");
             }
-            Material mat;
-            mat.type = type;
-            mat.properties.refractive.refractiveIndex = ri;
-            return mat; }),
+            return makeRefractive(ri); }),
              py::arg("type"), py::arg("refractive_index"), "Create a REFRACTIVE material from a RefractiveIndex.")
         .def_readwrite("type", &Material::type, "How the material interacts with rays.")
         .def_readwrite("properties", &Material::properties, "The parameters of the material; only those of its type are used.")

@@ -34,6 +34,8 @@ All notable changes to this project will be documented in this file.
 - Vector arguments (`Vector3`, `Vector4`) are converted by a type caster: a wrong number of values raises `ValueError` with a shorter message, and an argument of a wrong type a `TypeError` from pybind11 instead of one naming the argument. Vector properties still return tuples
 - Fix `ParallelRayGenerator.direction`, which was not normalised when set after construction
 - Name the Python attributes in error messages instead of the C++ functions (e.g. `Simulation.wavelength_um is not set` instead of `Call setWavelengthUm() first`). `get_output_buffer` for an output that was not enabled now says so, and `InstanceGeometry` rejects out-of-range `particle_type_ids` when it is created instead of in `run()`
+- Fix `Material(REFLECTIVE, reflectivity)` and `Material(REFRACTIVE, n)` with a real `n`, which raised `ValueError` because the `DIFFUSE` constructor took every `(type, number)` call; the reflectivity of a mirror without fuzziness is now checked to be in [0, 1] as well
+- Fix `calculate_volume_fraction()` discarding a pending rebuild of the ray tracing pipeline, so that e.g. a change of `random_number_generator` was ignored by the next `run()`
 - Invalid values for `Simulation.stokes_vector`, `max_nested_geometry_levels`, `direction_healpix_nside` and `length_unit` raise `ValueError` instead of `RuntimeError`
 
 ## 1.0.2 - 18-03-2026
