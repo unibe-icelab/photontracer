@@ -1,21 +1,24 @@
-import os
-
 import pytest
 
-from photontracer import available_backends
-
-# PHOTONTRACER_TEST_BACKENDS (e.g. "EMBREE") limits the tests to some backends, for a build with
-# OptiX on a machine without a GPU
-_selected = os.environ.get("PHOTONTRACER_TEST_BACKENDS")
-_backends = [b for b in available_backends() if _selected is None or b.name in _selected.split(",")]
+from photontracer import Backend, available_backends, is_cuda_available
 
 
-@pytest.fixture(params=_backends, ids=lambda backend: backend.name)
+def _usable(backend):
+    # A build with OptiX also runs on a machine without an NVIDIA GPU or driver
+    return backend != Backend.OPTIX or is_cuda_available()
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(b, id=b.name, marks=[] if _usable(b) else pytest.mark.skip(reason="no CUDA device"))
+        for b in available_backends()
+    ]
+)
 def backend(request):
     return request.param
 
 
 @pytest.fixture
 def backends():
-    """All selected backends, for tests that compare them."""
-    return _backends
+    """The backends that can run here, for tests that compare them."""
+    return [b for b in available_backends() if _usable(b)]
