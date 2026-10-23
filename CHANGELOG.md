@@ -37,6 +37,7 @@ All notable changes to this project will be documented in this file.
 - Fix `Material(REFLECTIVE, reflectivity)` and `Material(REFRACTIVE, n)` with a real `n`, which raised `ValueError` because the `DIFFUSE` constructor took every `(type, number)` call; the reflectivity of a mirror without fuzziness is now checked to be in [0, 1] as well
 - Fix `calculate_volume_fraction()` discarding a pending rebuild of the ray tracing pipeline, so that e.g. a change of `random_number_generator` was ignored by the next `run()`
 - Invalid values for `Simulation.stokes_vector`, `max_nested_geometry_levels`, `direction_healpix_nside` and `length_unit` raise `ValueError` instead of `RuntimeError`
+- Update LICENSE with current affiliation of Rafael Ottersberg
 
 ## 1.0.2 - 18-03-2026
 
