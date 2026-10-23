@@ -44,7 +44,7 @@ All notable changes to this project will be documented in this file.
 - The physics is host-compilable, with CPU-only tests (`runHostTests`) and statistical tests of the generator
 - `benchmarks/benchmark.py` for timing, `benchmarks/golden.py` to compare the output or statistics of two builds
 - CI compiles the OptiX build without a GPU, runs the CPU tests for Python 3.9 and 3.13, and checks that the committed stub is up to date (`scripts/generate_stubs.py`)
-- A workflow builds manylinux_2_28 wheels for Python 3.9 to 3.14 with cibuildwheel (CUDA 12.4, OptiX and Embree), tests the Embree backend and publishes development versions to TestPyPI
+- A workflow builds wheels for Python 3.9 to 3.14 with cibuildwheel, tests the Embree backend and publishes development versions to TestPyPI: manylinux_2_28 x86-64 and Windows x86-64 (CUDA 12.4, OptiX and Embree), and macOS 11+ arm64 (Embree only)
 - The Python tests skip the OptiX backend on a machine without a CUDA device
 - The examples and the README import the package as `import photontracer as phtr`, and the notebooks use `phtr.MaterialType.REFRACTIVE` and `phtr.Simulation(gpu_id=0)` throughout
 - Add this changelog, and update LICENSE with the current affiliation of Rafael Ottersberg
