@@ -304,6 +304,39 @@ def test_the_generator_can_be_changed_between_runs(backend):
     assert (results[0] == results[2]).all()      # switching back reproduces the first run
 
 
+def test_a_volume_fraction_keeps_a_pending_generator_change(backend):
+    if backend != Backend.OPTIX:
+        pytest.skip("only OptiX has a second generator")
+
+    def last_directions(change_generator):
+        sim = _box_simulation(backend, [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)])
+        sim.ray_generator = ParallelRayGenerator(number_of_rays=20000, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.9)
+        sim.outputs = [OutputType.LAST_DIRECTION]
+        sim.run()
+        if change_generator:
+            sim.random_number_generator = RandomNumberGenerator.MRG32K3A
+        sim.calculate_volume_fraction([-1, -1, -1], [1, 1, 1], 100)
+        sim.run()
+        return sim.get_output_buffer(OutputType.LAST_DIRECTION)
+
+    assert not (last_directions(True) == last_directions(False)).all()
+
+
+def test_one_positional_number_sets_the_parameter_of_each_type():
+    assert Material(MaterialType.DIFFUSE, 0.5).properties.diffuse.albedo == 0.5
+    mirror = Material(MaterialType.REFLECTIVE, 0.75)
+    assert mirror.type == MaterialType.REFLECTIVE
+    assert mirror.properties.reflective.reflectivity == 0.75 and mirror.properties.reflective.fuzziness == 0
+    glass = Material(MaterialType.REFRACTIVE, 1.5)
+    assert glass.type == MaterialType.REFRACTIVE and glass.properties.refractive.refractive_index.complex == 1.5
+    assert Material(MaterialType.REFLECTIVE, reflectivity=0.75).properties.reflective.reflectivity == 0.75
+    assert Material(MaterialType.DIFFUSE, albedo=0.5).properties.diffuse.albedo == 0.5
+    with pytest.raises(ValueError, match="reflectivity"):
+        Material(MaterialType.REFLECTIVE, reflectivity=2.0)
+    with pytest.raises(ValueError, match="VOLUME_SCATTERING"):
+        Material(MaterialType.VOLUME_SCATTERING, 1.0)
+
+
 def test_circular_polarization_at_normal(backend):
     sim = Simulation(backend=backend)
     angle_deg = 0

@@ -103,7 +103,7 @@ On an RTX GPU fast math is about 3–7% faster; on the CPU the difference is wit
 
 The kernels use PCG32 by default. It is much cheaper to seed than curand's MRG32k3a, which the 1.0
 releases used, and for scenes with little physics per ray this is most of the run time. To use
-curand again, for example to reproduce results of a 1.0 release ray by ray, set it on the simulation:
+curand again, set it on the simulation (OptiX only):
 
 ```python
 sim.random_number_generator = photontracer.RandomNumberGenerator.MRG32K3A
