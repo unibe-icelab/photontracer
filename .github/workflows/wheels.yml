@@ -22,7 +22,7 @@ jobs:
         # One job per Python version, each compiles everything
         python: [cp39, cp310, cp311, cp312, cp313, cp314]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Set a development version
@@ -37,8 +37,8 @@ jobs:
             echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
             exit 1
           fi
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: pypa/cibuildwheel@v3.4.1
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: pypa/cibuildwheel@v4.3.4
         env:
           CIBW_BUILD: ${{ matrix.python }}-manylinux_x86_64
           # The build runs in a container with its own sccache (installed by
@@ -50,7 +50,7 @@ jobs:
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
           CMAKE_CUDA_COMPILER_LAUNCHER: sccache
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.python }}
           path: wheelhouse/*.whl
@@ -63,7 +63,7 @@ jobs:
       matrix:
         python: [cp39, cp310, cp311, cp312, cp313, cp314]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Set a development version
@@ -77,8 +77,8 @@ jobs:
             echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
             exit 1
           fi
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: pypa/cibuildwheel@v3.4.1
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: pypa/cibuildwheel@v4.3.4
         env:
           CIBW_BUILD: ${{ matrix.python }}-macosx_arm64
           SCCACHE_GHA_ENABLED: "true"
@@ -86,7 +86,7 @@ jobs:
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.python }}-macos
           path: wheelhouse/*.whl
@@ -100,11 +100,11 @@ jobs:
       matrix:
         python: [cp39, cp310, cp311, cp312, cp313, cp314]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Install the CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.19
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: 12.4.1
           method: network
@@ -124,8 +124,8 @@ jobs:
           fi
       # Ninja needs the MSVC environment; the Visual Studio generator ignores compiler launchers
       - uses: ilammy/msvc-dev-cmd@v1
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: pypa/cibuildwheel@v3.4.1
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: pypa/cibuildwheel@v4.3.4
         env:
           CIBW_BUILD: ${{ matrix.python }}-win_amd64
           SCCACHE_GHA_ENABLED: "true"
@@ -136,8 +136,7 @@ jobs:
           CMAKE_GENERATOR: Ninja
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
-          CMAKE_CUDA_COMPILER_LAUNCHER: sccache
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.python }}-windows
           path: wheelhouse/*.whl
@@ -153,7 +152,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheel-*
           path: dist
@@ -174,7 +173,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheel-*
           path: dist
