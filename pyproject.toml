@@ -1,7 +1,7 @@
 [project]
 name = "photontracer"
 version = "1.1.0"
-description = "PhotonTracer: Light scattering simulation"
+description = "GPU-accelerated ray tracing of light in multiple scattering media"
 authors = [{name = "Rafael Ottersberg", email = "rafael.ottersberg@slf.ch"}]
 readme = "README.md"
 license = { file = "LICENSE" }

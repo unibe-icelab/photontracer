@@ -10,14 +10,14 @@ jobs:
     name: Compile OptiX build (no GPU)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: optix
           max-size: 1G
-      - uses: conda-incubator/setup-miniconda@v3
+      - uses: conda-incubator/setup-miniconda@v4
         with:
           environment-file: environment_linux.yml
           activate-environment: photontracer
@@ -46,10 +46,10 @@ jobs:
       matrix:
         python-version: ["3.9", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - uses: hendrikmuhs/ccache-action@v1.2
