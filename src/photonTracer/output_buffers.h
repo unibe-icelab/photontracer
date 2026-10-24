@@ -5,9 +5,9 @@
 
 #include <unordered_map>
 #include <string>
-#include <cuda_runtime.h>
 #include "photontracer.h"
 #include "raytracing_output.h"
+#include "i_raytracing_backend.h"
 
 struct BufferLayout
 {
@@ -18,7 +18,7 @@ struct BufferLayout
 class OutputBuffers
 {
 public:
-    OutputBuffers(uint3 bufferShape, const std::vector<BufferDescriptor> &descriptors);
+    OutputBuffers(IRaytracingBackend &backend, uint3 bufferShape, const std::vector<BufferDescriptor> &descriptors);
 
     ~OutputBuffers();
 
@@ -35,7 +35,11 @@ public:
 
     void clearZeroInitializedBuffers() const;
 
+    /// Copies a buffer to host memory; `host` must hold the whole buffer.
+    void copyToHost(OutputType type, void *host) const;
+
 private:
+    IRaytracingBackend *backend_;
     uint3 launchShape_;
     std::unordered_map<OutputType, BufferLayout> buffers_;
     std::vector<BufferDescriptor> bufferDescriptors_;

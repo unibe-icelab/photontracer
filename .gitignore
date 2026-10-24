@@ -1,4 +1,5 @@
-build/
+build*/
+dist*/
 out/
 
 archive/
@@ -22,3 +23,4 @@ CMakeCache.txt
 CMakeSettings.json
 CMakeFiles/
 *.out
+benchmarks/results/

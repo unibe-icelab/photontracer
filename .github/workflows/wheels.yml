@@ -1,0 +1,181 @@
+name: Wheels
+on:
+  # Pull requests that change the packaging, to test it before the workflow is on the default branch
+  pull_request:
+    paths:
+      - .github/workflows/wheels.yml
+      - pyproject.toml
+      - scripts/install_wheel_dependencies.sh
+      - scripts/install_wheel_dependencies_macos.sh
+      - scripts/install_wheel_dependencies_windows.ps1
+  workflow_dispatch:
+  # Publishing a GitHub release is the only way to upload to PyPI
+  release:
+    types: [published]
+jobs:
+  build-wheels:
+    name: Build wheel (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per Python version, each compiles everything
+        python: [cp39, cp310, cp311, cp312, cp313, cp314]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Set a development version
+        # TestPyPI accepts every version only once
+        if: github.event_name != 'release'
+        run: sed -i -E 's/^version = "([^"]+)"/version = "\1.dev${{ github.run_number }}"/' pyproject.toml
+      - name: Check that the release tag matches the version
+        if: github.event_name == 'release'
+        run: |
+          version=$(sed -n -E 's/^version = "([^"]+)"/\1/p' pyproject.toml)
+          if [ "${{ github.event.release.tag_name }}" != "v$version" ]; then
+            echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
+            exit 1
+          fi
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: pypa/cibuildwheel@v4.3.4
+        env:
+          CIBW_BUILD: ${{ matrix.python }}-manylinux_x86_64
+          # The build runs in a container with its own sccache (installed by
+          # scripts/install_wheel_dependencies.sh), which needs the cache credentials of the runner
+          CIBW_ENVIRONMENT_PASS_LINUX: SCCACHE_GHA_ENABLED SCCACHE_IDLE_TIMEOUT SCCACHE_IGNORE_SERVER_IO_ERROR ACTIONS_CACHE_URL ACTIONS_CACHE_SERVICE_V2 ACTIONS_RESULTS_URL ACTIONS_RUNTIME_TOKEN CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER CMAKE_CUDA_COMPILER_LAUNCHER
+          SCCACHE_GHA_ENABLED: "true"
+          SCCACHE_IDLE_TIMEOUT: "0"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+          CMAKE_CUDA_COMPILER_LAUNCHER: sccache
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.python }}
+          path: wheelhouse/*.whl
+  build-wheels-macos:
+    name: Build wheel (${{ matrix.python }}, macOS)
+    # Apple silicon
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [cp39, cp310, cp311, cp312, cp313, cp314]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Set a development version
+        if: github.event_name != 'release'
+        run: sed -i '' -E 's/^version = "([^"]+)"/version = "\1.dev${{ github.run_number }}"/' pyproject.toml
+      - name: Check that the release tag matches the version
+        if: github.event_name == 'release'
+        run: |
+          version=$(sed -n -E 's/^version = "([^"]+)"/\1/p' pyproject.toml)
+          if [ "${{ github.event.release.tag_name }}" != "v$version" ]; then
+            echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
+            exit 1
+          fi
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: pypa/cibuildwheel@v4.3.4
+        env:
+          CIBW_BUILD: ${{ matrix.python }}-macosx_arm64
+          SCCACHE_GHA_ENABLED: "true"
+          SCCACHE_IDLE_TIMEOUT: "0"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.python }}-macos
+          path: wheelhouse/*.whl
+  build-wheels-windows:
+    name: Build wheel (${{ matrix.python }}, Windows)
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [cp39, cp310, cp311, cp312, cp313, cp314]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Install the CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: 12.4.1
+          method: network
+          sub-packages: '["nvcc", "cudart", "visual_studio_integration", "curand_dev"]'
+      - name: Set a development version
+        if: github.event_name != 'release'
+        shell: bash
+        run: sed -i -E 's/^version = "([^"]+)"/version = "\1.dev${{ github.run_number }}"/' pyproject.toml
+      - name: Check that the release tag matches the version
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          version=$(sed -n -E 's/^version = "([^"]+)"/\1/p' pyproject.toml)
+          if [ "${{ github.event.release.tag_name }}" != "v$version" ]; then
+            echo "::error::Release tag ${{ github.event.release.tag_name }} does not match version $version in pyproject.toml"
+            exit 1
+          fi
+      # Ninja needs the MSVC environment; the Visual Studio generator ignores compiler launchers
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: pypa/cibuildwheel@v4.3.4
+        env:
+          CIBW_BUILD: ${{ matrix.python }}-win_amd64
+          SCCACHE_GHA_ENABLED: "true"
+          # The cache must never fail the build: no idle shutdown of the server during the long Embree
+          # compiles, and a lost connection falls back to compiling directly
+          SCCACHE_IDLE_TIMEOUT: "0"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CMAKE_GENERATOR: Ninja
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.python }}-windows
+          path: wheelhouse/*.whl
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [build-wheels, build-wheels-macos, build-wheels-windows]
+    # Pull requests from forks get no token for trusted publishing
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/photontracer
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build-wheels, build-wheels-macos, build-wheels-windows]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    # The environment restricts the tags that may deploy and can require an approval, see the
+    # repository settings; the PyPI publisher accepts only this environment
+    environment:
+      name: pypi
+      url: https://pypi.org/p/photontracer
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

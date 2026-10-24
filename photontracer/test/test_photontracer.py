@@ -1,9 +1,11 @@
 import numpy as np
 import trimesh
-from photontracer import LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, OutputType
+import pytest
+import photontracer
+from photontracer import available_backends, Backend, TraceEvent, LengthUnit, Material, MaterialType, MeshGeometry, InstanceGeometry, Simulation, ParallelRayGenerator, IsotropicRayGenerator, DiffuseRayGenerator, OutputType, RandomNumberGenerator
 
-def test_reflection_angle():
-    sim = Simulation(gpu_id=0)
+def test_reflection_angle(backend):
+    sim = Simulation(backend=backend)
     angle_deg = 45
     angle_rad = np.radians(angle_deg)
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
@@ -54,8 +56,289 @@ def test_reflection_angle():
     assert stokes_up.mean(axis=0)[1] < 0, "Stokes vector Q should be positive on average"
 
 
-def test_circular_polarization_at_normal():
-    sim = Simulation(gpu_id=0)
+@pytest.mark.parametrize("compact", [True, False])
+@pytest.mark.parametrize("subdivisions", [0, 6])
+def test_dense_mesh_reflection(backend, subdivisions, compact):
+    # A finely subdivided slab must behave like the 12-triangle one, with or without compaction.
+    sim = Simulation(backend=backend)
+    k = np.array([-np.sin(np.pi / 4), 0, -np.cos(np.pi / 4)])
+    slab = trimesh.creation.box(extents=[10, 10, 1],
+                                transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    for _ in range(subdivisions):
+        slab = slab.subdivide()
+
+    sim.wavelength_um = 1
+    sim.stokes_vector = [1, 0, 0, 0]
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces, compact=compact)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1+0j), Material(MaterialType.REFRACTIVE, 1.5+0j)]
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=10000, origin=-k, direction=k, offset_radius=3)
+    sim.outputs = [OutputType.SCATTERING_COUNT, OutputType.LAST_DIRECTION]
+    sim.run()
+
+    k_out = sim.get_output_buffer(OutputType.LAST_DIRECTION)
+    count = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
+    reflected = (count == 1) & (k_out[:, 2] > 0)
+    assert reflected.any()
+    assert np.allclose(k_out[reflected], [k[0], 0, -k[2]], atol=1e-5)
+
+
+def _box_simulation(backend, materials, geometry=None):
+    sim = Simulation(backend=backend)
+    box = trimesh.creation.box(extents=[2, 2, 2])
+    sim.geometry = geometry or MeshGeometry(box.vertices, box.faces)
+    sim.wavelength_um = 1.0
+    sim.materials = materials
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=100, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.5)
+    sim.outputs = [OutputType.SCATTERING_COUNT]
+    return sim
+
+
+def _materials(count):
+    """Vacuum followed by glass materials."""
+    return [Material(MaterialType.REFRACTIVE, 1 + 0j)] + [Material(MaterialType.REFRACTIVE, 1.5 + 0j)] * (count - 1)
+
+
+def _instances(material_id):
+    sphere = trimesh.creation.icosphere(radius=1.0, subdivisions=1)
+    return InstanceGeometry([MeshGeometry(sphere.vertices, sphere.faces)],
+                            np.eye(4, dtype=np.float32)[None, :3, :], [0], [material_id])
+
+
+def test_too_many_materials_are_rejected(backend):
+    sim = Simulation(backend=backend)
+    with pytest.raises(ValueError, match="materials"):
+        sim.materials = _materials(17)
+
+
+def test_mesh_needs_two_materials(backend):
+    with pytest.raises(ValueError, match="material"):
+        _box_simulation(backend, _materials(1)).run()
+
+
+@pytest.mark.parametrize("material_id, count", [(2, 2), (5, 2), (16, 16)])
+def test_instance_material_id_out_of_range_is_rejected(backend, material_id, count):
+    with pytest.raises(ValueError, match="material"):
+        _box_simulation(backend, _materials(count), _instances(material_id)).run()
+
+
+def test_last_material_id_is_supported(backend):
+    sim = _box_simulation(backend, _materials(16), _instances(15))
+    sim.run()
+    assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[0] == 2
+
+
+def test_geometry_shared_between_simulations(backend):
+    box = trimesh.creation.box(extents=[2, 2, 2])
+    geometry = MeshGeometry(box.vertices, box.faces)
+    a = _box_simulation(backend, _materials(2), geometry)
+    b = _box_simulation(backend, _materials(2), geometry)
+
+    counts = []
+    for sim in (a, b, a, b):
+        sim.run()
+        counts.append(sim.get_output_buffer(OutputType.SCATTERING_COUNT).copy())
+    del b
+    a.run()
+    counts.append(a.get_output_buffer(OutputType.SCATTERING_COUNT).copy())
+
+    for result in counts[1:]:
+        assert (result == counts[0]).all()
+
+
+def test_simulation_survives_destruction_of_another(backend):
+    first = _box_simulation(backend, _materials(2))
+    first.run()
+    second = _box_simulation(backend, _materials(2))
+    second.run()
+    del second
+    before = first.get_output_buffer(OutputType.SCATTERING_COUNT).copy()
+    first.run()
+    assert (first.get_output_buffer(OutputType.SCATTERING_COUNT) == before).all()
+
+
+# Statistical checks against exact results. They only pass if the random numbers are uniform
+# and uncorrelated. Five standard errors keep them stable.
+
+GENERATORS = [RandomNumberGenerator.PCG32, RandomNumberGenerator.MRG32K3A]
+
+
+def _slab_beam_simulation(backend, material, rays, generator, seed=42):
+    """A beam falling straight onto a large slab whose top surface is z = 0."""
+    sim = Simulation(backend=backend)
+    slab = trimesh.creation.box(extents=[10, 10, 1],
+                                transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.wavelength_um = 1.0
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), material]
+    sim.seed = seed
+    _set_generator(sim, generator)
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=rays, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=3)
+    sim.outputs = [OutputType.SCATTERING_COUNT, OutputType.LAST_DIRECTION, OutputType.RAY_STATE]
+    sim.run()
+    return (sim.get_output_buffer(OutputType.SCATTERING_COUNT), sim.get_output_buffer(OutputType.LAST_DIRECTION),
+            sim.get_output_buffer(OutputType.RAY_STATE))
+
+
+def _set_generator(sim, generator):
+    try:
+        sim.random_number_generator = generator
+    except ValueError:
+        pytest.skip(f"{generator} is not available on this backend")
+
+
+def _assert_fraction(count, total, expected, what):
+    sigma = np.sqrt(expected * (1 - expected) / total)
+    assert abs(count / total - expected) < 5 * sigma, f"{what}: {count / total:.5f}, expected {expected:.5f} +- {sigma:.5f}"
+
+
+def test_pcg32_is_the_default_random_number_generator(backend):
+    assert Simulation(backend=backend).random_number_generator == RandomNumberGenerator.PCG32
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_normal_incidence_reflectance_matches_fresnel(backend, generator):
+    n = 400000
+    counts, directions, _ = _slab_beam_simulation(backend, Material(MaterialType.REFRACTIVE, 1.5 + 0j), n, generator)
+    reflected_at_top = (counts == 1) & (directions[:, 2] > 0)
+    _assert_fraction(int(reflected_at_top.sum()), n, ((1.5 - 1) / (1.5 + 1)) ** 2, "reflectance")
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_diffuse_surface_absorbs_one_minus_albedo(backend, generator):
+    n = 400000
+    counts, directions, state = _slab_beam_simulation(backend, Material(MaterialType.DIFFUSE, 0.3), n, generator)
+    _assert_fraction(int((state == 1).sum()), n, 0.7, "absorbed fraction")
+
+    # a Lambertian surface sends light out with a mean cosine of 2/3
+    scattered = state == 0
+    mean_cosine = directions[scattered, 2].mean()
+    assert abs(mean_cosine - 2 / 3) < 5 * np.sqrt(1 / 18 / scattered.sum())
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_isotropic_source_is_uniform_on_the_sphere(backend, generator):
+    n = 300000
+    sim = Simulation(backend=backend)
+    sphere = trimesh.creation.icosphere(subdivisions=1, radius=1.0)
+    sim.geometry = MeshGeometry(sphere.vertices, sphere.faces)
+    sim.wavelength_um = 1.0
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.3 + 0j)]
+    _set_generator(sim, generator)
+    sim.ray_generator = IsotropicRayGenerator(number_of_rays=n, center=(0, 0, 0), source_radius=10, offset_radius=1)
+    sim.outputs = [OutputType.SOURCE_DIRECTION]
+    sim.run()
+    directions = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
+
+    assert np.allclose(np.linalg.norm(directions, axis=1), 1.0, atol=1e-5)
+    assert (np.abs(directions.mean(axis=0)) < 5 / np.sqrt(3 * n)).all()  # each component has variance 1/3
+    assert np.allclose((directions ** 2).mean(axis=0), 1 / 3, atol=5 * np.sqrt(4 / 45 / n))
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_diffuse_source_is_cosine_weighted_in_the_hemisphere(backend, generator):
+    n = 200000
+    sim = Simulation(backend=backend)
+    sphere = trimesh.creation.icosphere(subdivisions=1, radius=1.0)
+    sim.geometry = MeshGeometry(sphere.vertices, sphere.faces)
+    sim.wavelength_um = 1.0
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.3 + 0j)]
+    _set_generator(sim, generator)
+    sim.ray_generator = DiffuseRayGenerator(number_of_rays=n, origin=(0, 0, 10), direction=(0, 0, -1), offset_radius=2)
+    sim.outputs = [OutputType.SOURCE_DIRECTION, OutputType.SOURCE_POSITION]
+    sim.run()
+    directions = sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
+    positions = sim.get_output_buffer(OutputType.SOURCE_POSITION)
+
+    assert np.allclose(np.linalg.norm(directions, axis=1), 1.0, atol=1e-5)
+    cosine = -directions[:, 2]
+    assert (cosine >= -1e-5).all()
+    assert abs(cosine.mean() - 2 / 3) < 5 * np.sqrt(1 / 18 / n)
+    assert np.allclose(positions[:, 2], 10)
+    assert (np.hypot(positions[:, 0], positions[:, 1]) <= 2 + 1e-5).all()
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_same_seed_gives_the_same_rays_and_another_seed_different_ones(backend, generator):
+    glass = Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)
+    first = _slab_beam_simulation(backend, glass, 20000, generator, seed=5)
+    again = _slab_beam_simulation(backend, glass, 20000, generator, seed=5)
+    other = _slab_beam_simulation(backend, glass, 20000, generator, seed=6)
+
+    assert (first[1] == again[1]).all()
+    assert not (first[1] == other[1]).all()
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_pipelines_pass_optix_validation_with_each_generator(backend, generator):
+    if backend != Backend.OPTIX:
+        pytest.skip("validation mode is an OptiX feature")
+    # Validation mode checks every payload access against the declared payload size
+    sim = Simulation(backend=backend, enable_validation_mode=True)
+    sphere = trimesh.creation.icosphere(subdivisions=2, radius=2.0)
+    sim.geometry = MeshGeometry(sphere.vertices, sphere.faces)
+    sim.materials = _materials(2)
+    sim.wavelength_um = 1.0
+    sim.random_number_generator = generator
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=1000, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=1)
+    sim.outputs = [OutputType.SCATTERING_COUNT]
+    sim.run()
+    assert sim.calculate_volume_fraction([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5], 1000) == 1.0
+
+
+def test_the_generator_can_be_changed_between_runs(backend):
+    if backend != Backend.OPTIX:
+        pytest.skip("only OptiX has a second generator")
+    glass = Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)
+    sim = _box_simulation(backend, _materials(2))
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), glass]
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=20000, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.9)
+    sim.outputs = [OutputType.LAST_DIRECTION]
+
+    results = []
+    for generator in (RandomNumberGenerator.PCG32, RandomNumberGenerator.MRG32K3A, RandomNumberGenerator.PCG32):
+        sim.random_number_generator = generator
+        sim.run()
+        results.append(sim.get_output_buffer(OutputType.LAST_DIRECTION).copy())
+
+    assert not (results[0] == results[1]).all()  # another generator draws other numbers
+    assert (results[0] == results[2]).all()      # switching back reproduces the first run
+
+
+def test_a_volume_fraction_keeps_a_pending_generator_change(backend):
+    if backend != Backend.OPTIX:
+        pytest.skip("only OptiX has a second generator")
+
+    def last_directions(change_generator):
+        sim = _box_simulation(backend, [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)])
+        sim.ray_generator = ParallelRayGenerator(number_of_rays=20000, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.9)
+        sim.outputs = [OutputType.LAST_DIRECTION]
+        sim.run()
+        if change_generator:
+            sim.random_number_generator = RandomNumberGenerator.MRG32K3A
+        sim.calculate_volume_fraction([-1, -1, -1], [1, 1, 1], 100)
+        sim.run()
+        return sim.get_output_buffer(OutputType.LAST_DIRECTION)
+
+    assert not (last_directions(True) == last_directions(False)).all()
+
+
+def test_one_positional_number_sets_the_parameter_of_each_type():
+    assert Material(MaterialType.DIFFUSE, 0.5).properties.diffuse.albedo == 0.5
+    mirror = Material(MaterialType.REFLECTIVE, 0.75)
+    assert mirror.type == MaterialType.REFLECTIVE
+    assert mirror.properties.reflective.reflectivity == 0.75 and mirror.properties.reflective.fuzziness == 0
+    glass = Material(MaterialType.REFRACTIVE, 1.5)
+    assert glass.type == MaterialType.REFRACTIVE and glass.properties.refractive.refractive_index.complex == 1.5
+    assert Material(MaterialType.REFLECTIVE, reflectivity=0.75).properties.reflective.reflectivity == 0.75
+    assert Material(MaterialType.DIFFUSE, albedo=0.5).properties.diffuse.albedo == 0.5
+    with pytest.raises(ValueError, match="reflectivity"):
+        Material(MaterialType.REFLECTIVE, reflectivity=2.0)
+    with pytest.raises(ValueError, match="VOLUME_SCATTERING"):
+        Material(MaterialType.VOLUME_SCATTERING, 1.0)
+
+
+def test_circular_polarization_at_normal(backend):
+    sim = Simulation(backend=backend)
     angle_deg = 0
     angle_rad = np.radians(angle_deg)
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
@@ -106,8 +389,8 @@ def test_circular_polarization_at_normal():
                        1, 0, 0, -1], atol=1e-2), "Stokes vector not as expected on average"
 
 
-def test_linear_polarization_at_normal():
-    sim = Simulation(gpu_id=0)
+def test_linear_polarization_at_normal(backend):
+    sim = Simulation(backend=backend)
     angle_deg = 0
     angle_rad = np.radians(angle_deg)
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
@@ -157,8 +440,8 @@ def test_linear_polarization_at_normal():
                        1, 1, 0, 0], atol=1e-2), "Stokes vector not as expected on average"
 
 
-def test_linear_u_polarization_at_normal():
-    sim = Simulation(gpu_id=0)
+def test_linear_u_polarization_at_normal(backend):
+    sim = Simulation(backend=backend)
     angle_deg = 0
     angle_rad = np.radians(angle_deg)
     k = np.array([-np.sin(angle_rad), 0, -np.cos(angle_rad)], dtype=float)
@@ -209,8 +492,8 @@ def test_linear_u_polarization_at_normal():
 
 
 
-def test_ref_brewster_p_pol():
-    sim = Simulation(gpu_id=0)
+def test_ref_brewster_p_pol(backend):
+    sim = Simulation(backend=backend)
     # brewster angle for air to glass
     brewster_angle = np.arctan(1.5)
 
@@ -249,7 +532,7 @@ def test_ref_brewster_p_pol():
     
     assert escape_up.sum() == 0, "No rays should be reflected at brewster angle"
 
-def test_layered_absorption():
+def test_layered_absorption(backend):
     # create a mesh representation af a sphere
     slab_1 = trimesh.creation.box(extents=(8, 8, 5), transform=trimesh.transformations.translation_matrix((0, 0, 2.5)))
     slab_2 = trimesh.creation.box(extents=(9, 9, 3), transform=trimesh.transformations.translation_matrix((0, 0, 1.5)))
@@ -268,7 +551,7 @@ def test_layered_absorption():
     material_ids = [2, 1, 3]
     particle_ids = [0, 1, 2]
 
-    sim = Simulation(gpu_id=0)
+    sim = Simulation(backend=backend)
     sim.geometry = InstanceGeometry([slab_1_mesh, slab_2_mesh, slab_3_mesh], transforms, particle_ids, material_ids)
 
     sim.wavelength_um = 0.55  # green light
@@ -292,10 +575,8 @@ def test_layered_absorption():
     a_2s = []
     a_3s = []
     a_4s = []
-    import random
-
-    for _ in range(10):
-        sim.seed = random.randint(0, 2**31 - 1)
+    for run in range(10):
+        sim.seed = 1000 + run
         sim.run()
 
         scattering_angles = sim.get_output_buffer(OutputType.SCATTERING_ANGLE)
@@ -343,3 +624,461 @@ def test_layered_absorption():
     assert np.isclose(a_2_mean, a_2_expected, atol=1e-3)
     assert np.isclose(a_3_mean, a_3_expected, atol=1e-3)
     assert np.isclose(a_4_mean, a_4_expected, atol=1e-3)
+
+def test_a_build_has_a_backend_and_creates_it_by_default():
+    assert available_backends()
+    sim = Simulation()
+    assert sim.random_number_generator == RandomNumberGenerator.PCG32
+
+
+def test_default_falls_back_to_embree_without_cuda():
+    both = all(b in available_backends() for b in (Backend.OPTIX, Backend.EMBREE))
+    if not both or photontracer.is_cuda_available():
+        pytest.skip("needs a build with both backends on a machine without a CUDA device")
+    with pytest.warns(RuntimeWarning, match="No CUDA device"):
+        sim = Simulation()
+    # MRG32K3A is OptiX only
+    with pytest.raises(ValueError, match="random number generator"):
+        sim.random_number_generator = RandomNumberGenerator.MRG32K3A
+
+
+def test_embree_only_supports_pcg32():
+    if Backend.EMBREE not in available_backends():
+        pytest.skip("this build has no Embree backend")
+    sim = Simulation(backend=Backend.EMBREE)
+    with pytest.raises(ValueError, match="random number generator"):
+        sim.random_number_generator = RandomNumberGenerator.MRG32K3A
+
+
+def test_a_backend_that_is_not_built_is_rejected():
+    missing = [b for b in (Backend.OPTIX, Backend.EMBREE) if b not in available_backends()]
+    if not missing:
+        pytest.skip("this build has every backend")
+    with pytest.raises(RuntimeError, match="does not contain"):
+        Simulation(backend=missing[0])
+
+
+def _glass_ball():
+    ball = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+    return MeshGeometry(ball.vertices, ball.faces)
+
+
+def _transform(scale=1.0, shift=(0, 0, 0)):
+    matrix = np.eye(4, dtype=np.float32)[:3]
+    matrix[:, :3] *= scale
+    matrix[:, 3] = shift
+    return matrix
+
+
+def _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10), rays=1000):
+    sim = Simulation(backend=backend)
+    sim.geometry = geometry
+    sim.materials = materials
+    sim.wavelength_um = 1.0
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=rays, origin=origin, direction=[0, 0, -1], offset_radius=0.05)
+    sim.outputs = [OutputType.RAY_STATE, OutputType.LAST_POSITION, OutputType.SCATTERING_COUNT]
+    sim.run()
+    return {o: sim.get_output_buffer(o) for o in sim.outputs}
+
+
+def _first_position_on_slab(backend, origin):
+    # A glass slab with its top at z = 0; the rays go on after the first hit
+    slab = trimesh.creation.box(extents=[10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim = Simulation(backend=backend)
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j)]
+    sim.wavelength_um = 1.0
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=1000, origin=origin, direction=[0, 0, -1], offset_radius=0.05)
+    sim.outputs = [OutputType.FIRST_POSITION, OutputType.SCATTERING_COUNT]
+    sim.run()
+    return sim.get_output_buffer(OutputType.FIRST_POSITION), sim.get_output_buffer(OutputType.SCATTERING_COUNT)
+
+
+def test_first_position_is_the_first_hit(backend):
+    position, count = _first_position_on_slab(backend, origin=(1, 2, 10))
+    assert position.shape == (1000, 3)
+    assert (count >= 1).all()
+    assert np.allclose(position[:, 2], 0, atol=1e-4)
+    assert np.allclose(position[:, 0], 1, atol=0.06) and np.allclose(position[:, 1], 2, atol=0.06)
+
+
+def test_first_position_is_nan_for_a_ray_without_interaction(backend):
+    position, count = _first_position_on_slab(backend, origin=(20, 0, 10))
+    assert (count == 0).all()
+    assert np.isnan(position).all()
+
+
+def test_instance_is_placed_by_its_transform(backend):
+    # An absorbing ball of radius 2 at x = 3 stops a beam at its top
+    absorber = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.DIFFUSE, 0.0)]
+    geometry = InstanceGeometry([_glass_ball()], _transform(2.0, (3, 0, 0))[None], [0], [1])
+    result = _beam_on_instances(backend, geometry, absorber, origin=(3, 0, 10))
+    assert (result[OutputType.RAY_STATE] == 1).all()
+    position = result[OutputType.LAST_POSITION]
+    assert np.allclose(position[:, 0], 3, atol=0.2)
+    assert (position[:, 2] > 1.95).all() and (position[:, 2] < 2.0001).all()
+
+    # beside the ball the beam passes
+    result = _beam_on_instances(backend, geometry, absorber, origin=(0, 0, 10))
+    assert (result[OutputType.RAY_STATE] == 0).all()
+    assert (result[OutputType.SCATTERING_COUNT] == 0).all()
+
+
+def test_each_instance_uses_its_own_material(backend):
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j),
+                 Material(MaterialType.DIFFUSE, 0.0)]
+    transforms = np.stack([_transform(1.0, (0, 0, 0)), _transform(1.0, (5, 0, 0))])
+    geometry = InstanceGeometry([_glass_ball()], transforms, [0, 0], [1, 2])
+    glass = _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10))
+    black = _beam_on_instances(backend, geometry, materials, origin=(5, 0, 10))
+    assert (glass[OutputType.RAY_STATE] == 0).all() and (glass[OutputType.SCATTERING_COUNT] >= 1).all()
+    assert (black[OutputType.RAY_STATE] == 1).all()
+
+
+# The material of a hit in nested instances is the ID of the innermost instance, the one that holds
+# the mesh. The OptiX documentation does not specify this for nested instance acceleration
+# structures; the Embree backend copies the behaviour, and these tests fail if either changes.
+
+@pytest.mark.parametrize("inner, outer", [(1, 2), (2, 1)])
+def test_nested_instances_use_the_innermost_material(backend, inner, outer):
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j),
+                 Material(MaterialType.DIFFUSE, 0.0)]
+    inside = InstanceGeometry([_glass_ball()], _transform()[None], [0], [inner])
+    geometry = InstanceGeometry([inside], _transform(1.0, (0, 0, 1))[None], [0], [outer])
+    result = _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10))
+    absorbed = (result[OutputType.RAY_STATE] == 1).all()
+    assert absorbed == (inner == 2)
+
+
+@pytest.mark.parametrize("absorbing_level", [0, 1, 2])
+def test_only_the_innermost_of_three_levels_decides_the_material(backend, absorbing_level):
+    # Level 0 is the innermost. Only a black innermost instance absorbs; the same ID on a
+    # level above it, while the innermost is glass, must not.
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j),
+                 Material(MaterialType.DIFFUSE, 0.0)]
+    ids = [2 if level == absorbing_level else 1 for level in range(3)]
+    geometry = _glass_ball()
+    for level, shift in enumerate([(0, 0, 0), (0, 0, 1), (0, 0, 1)]):
+        geometry = InstanceGeometry([geometry], _transform(1.0, shift)[None], [0], [ids[level]])
+    result = _beam_on_instances(backend, geometry, materials, origin=(0, 0, 10))
+    assert (result[OutputType.RAY_STATE] == 1).all() == (absorbing_level == 0)
+
+
+def test_one_inner_instance_used_by_two_outer_instances_with_different_ids(backend):
+    # The outer IDs differ, the inner geometry is shared and has the ID of the glass
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j),
+                 Material(MaterialType.DIFFUSE, 0.0)]
+    inner = InstanceGeometry([_glass_ball()], _transform()[None], [0], [1])
+    transforms = np.stack([_transform(1.0, (0, 0, 0)), _transform(1.0, (5, 0, 0))])
+    geometry = InstanceGeometry([inner], transforms, [0, 0], [2, 2])
+    for x in (0, 5):
+        result = _beam_on_instances(backend, geometry, materials, origin=(x, 0, 10))
+        assert (result[OutputType.RAY_STATE] == 0).all()
+        assert (result[OutputType.SCATTERING_COUNT] >= 1).all()
+
+
+def test_instances_can_share_a_mesh_and_a_geometry_can_be_reused(backend):
+    ball = _glass_ball()
+    materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j)]
+    transforms = np.stack([_transform(1.0, (4 * i, 0, 0)) for i in range(50)])
+    geometry = InstanceGeometry([ball], transforms, [0] * 50, [1] * 50)
+    for _ in range(2):
+        hit = _beam_on_instances(backend, geometry, materials, origin=(12, 0, 10))
+        gap = _beam_on_instances(backend, geometry, materials, origin=(14, 0, 10))
+        assert (hit[OutputType.SCATTERING_COUNT] >= 1).all()
+        assert (gap[OutputType.SCATTERING_COUNT] == 0).all()
+
+
+def _healpix_simulation(backend, nside=1):
+    sim = Simulation(backend=backend)
+    slab = trimesh.creation.box(extents=[10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 1e-3j)]
+    sim.wavelength_um = 1.0
+    sim.direction_healpix_nside = nside
+    return sim
+
+
+@pytest.mark.parametrize("direction, bins", [((0, 0, -1), range(8, 12)), ((0, 0, 1), range(0, 4))])
+def test_healpix_histogram_counts_rays_that_miss_in_one_bin(backend, direction, bins):
+    # Rays that never meet the slab leave in their start direction, a polar cap pixel
+    sim = _healpix_simulation(backend)
+    n = 1000
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=n, origin=[100, 0, 0], direction=direction, offset_radius=1)
+    sim.outputs = [OutputType.DIRECTION_HISTOGRAM_HEALPIX]
+    sim.run()
+    histogram = sim.get_output_buffer(OutputType.DIRECTION_HISTOGRAM_HEALPIX).ravel()
+    assert histogram.sum() == n
+    assert np.count_nonzero(histogram) == 1
+    assert histogram.argmax() in bins
+
+
+def test_healpix_histogram_matches_the_last_directions(backend):
+    # The 12 pixels of nside = 1 are diamonds: the 4 northern ones contain the cap z > 2/3 and
+    # lie in z >= 0, and the 4 southern ones mirror them
+    sim = _healpix_simulation(backend)
+    sim.ray_generator = IsotropicRayGenerator(number_of_rays=100000, center=(0, 0, 0), source_radius=20, offset_radius=3)
+    sim.outputs = [OutputType.DIRECTION_HISTOGRAM_HEALPIX, OutputType.LAST_DIRECTION, OutputType.RAY_STATE]
+    sim.run()
+    histogram = sim.get_output_buffer(OutputType.DIRECTION_HISTOGRAM_HEALPIX).ravel()
+    z = sim.get_output_buffer(OutputType.LAST_DIRECTION)[:, 2]
+    escaped = sim.get_output_buffer(OutputType.RAY_STATE) == 0
+
+    assert histogram.sum() == escaped.sum()
+    north, equator, south = histogram[0:4].sum(), histogram[4:8].sum(), histogram[8:12].sum()
+    assert (escaped & (z > 2 / 3)).sum() <= north <= (escaped & (z >= 0)).sum()
+    assert (escaped & (z < -2 / 3)).sum() <= south <= (escaped & (z <= 0)).sum()
+    assert equator >= (escaped & (np.abs(z) < 1e-3)).sum()
+    assert min(north, equator, south) > 0.2 * escaped.sum()
+
+
+def _diamond_ball_simulation(backend, rays=2000, **kwargs):
+    # A high refractive index traps rays by total internal reflection, so rays scatter many times
+    sim = Simulation(backend=backend)
+    ball = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+    sim.geometry = MeshGeometry(ball.vertices, ball.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 2.4 + 1e-4j)]
+    sim.wavelength_um = 1.0
+    sim.seed = 7
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=rays, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=0.9)
+    sim.outputs = [OutputType.SCATTERING_COUNT, OutputType.SOURCE_POSITION, OutputType.SOURCE_DIRECTION,
+                   OutputType.LAST_DIRECTION, OutputType.LAST_MEDIUM_ID, OutputType.RAY_STATE,
+                   OutputType.OPTICAL_PATH_LENGTH]
+    for name, value in kwargs.items():
+        setattr(sim, name, value)
+    return sim
+
+
+def test_trace_follows_a_ray_off_a_mirror(backend):
+    k = np.array([-np.sin(np.pi / 4), 0, -np.cos(np.pi / 4)])
+    slab = trimesh.creation.box(extents=[10, 10, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim = Simulation(backend=backend)
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFLECTIVE, 1.0, 0.0)]
+    sim.wavelength_um = 1.0
+    sim.ray_generator = ParallelRayGenerator(number_of_rays=10, origin=-3 * k, direction=k, offset_radius=0)
+    sim.outputs = [OutputType.SCATTERING_COUNT]
+    sim.trace_rays = [3]
+    sim.run()
+
+    steps = sim.get_trace()
+    assert len(steps) == 2
+    assert list(steps["ray"]) == [3, 3] and list(steps["step"]) == [0, 1]
+    assert list(steps["event"]) == [TraceEvent.INTERACTION, TraceEvent.ESCAPED]
+    reflected = np.array([k[0], 0, -k[2]])
+    assert np.allclose(steps["direction_in"][0], k, atol=1e-6)
+    assert np.allclose(steps["direction_out"][0], reflected, atol=1e-5)
+    assert abs(steps["origin_out"][0][2]) < 1e-4 and steps["origin_out"][0][2] > 0
+    assert np.allclose(steps["origin_in"][1], steps["origin_out"][0])
+    assert np.allclose(steps["direction_in"][1], steps["direction_out"][0])
+    assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[3] == 1
+
+
+def test_trace_agrees_with_the_outputs(backend):
+    sim = _diamond_ball_simulation(backend)
+    sim.trace_rays = [0, 5, 99, 1500, 1999]
+    sim.run()
+    steps = sim.get_trace()
+    out = {o: sim.get_output_buffer(o) for o in (OutputType.SCATTERING_COUNT, OutputType.SOURCE_POSITION,
+                                                OutputType.SOURCE_DIRECTION, OutputType.LAST_DIRECTION,
+                                                OutputType.LAST_MEDIUM_ID, OutputType.RAY_STATE,
+                                                OutputType.OPTICAL_PATH_LENGTH)}
+    assert sorted(set(steps["ray"])) == [0, 5, 99, 1500, 1999]
+    for ray in (0, 5, 99, 1500, 1999):
+        mine = steps[steps["ray"] == ray]
+        assert len(mine) == out[OutputType.SCATTERING_COUNT][ray] + 1
+        assert list(mine["step"]) == list(range(len(mine)))
+        assert np.allclose(mine["origin_in"][0], out[OutputType.SOURCE_POSITION][ray])
+        assert np.allclose(mine["direction_in"][0], out[OutputType.SOURCE_DIRECTION][ray])
+        assert np.array_equal(mine["origin_in"][1:], mine["origin_out"][:-1])
+        assert np.array_equal(mine["direction_in"][1:], mine["direction_out"][:-1])
+        assert np.array_equal(mine["medium_in"][1:], mine["medium_out"][:-1])
+        assert (mine["event"][:-1] == TraceEvent.INTERACTION).all()
+        last = mine[-1]
+        assert np.array_equal(last["direction_out"], out[OutputType.LAST_DIRECTION][ray])
+        assert last["medium_out"] == out[OutputType.LAST_MEDIUM_ID][ray]
+        assert np.isclose(last["optical_path_length"], out[OutputType.OPTICAL_PATH_LENGTH][ray], rtol=1e-6)
+        expected = TraceEvent.ESCAPED if out[OutputType.RAY_STATE][ray] == 0 else TraceEvent.ABSORBED
+        assert last["event"] == expected
+
+
+def test_a_ray_found_in_a_run_can_be_traced_in_the_next(backend):
+    sim = _diamond_ball_simulation(backend)
+    sim.run()
+    counts = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
+    ray = int(counts.argmax())
+    assert counts[ray] >= 5
+
+    sim.trace_rays = [ray]
+    sim.run()
+    assert len(sim.get_trace()) == counts[ray] + 1
+    assert sim.get_output_buffer(OutputType.SCATTERING_COUNT)[ray] == counts[ray]
+
+    # steps beyond the limit are not stored
+    sim.max_trace_steps = 3
+    sim.run()
+    steps = sim.get_trace()
+    assert list(steps["step"]) == [0, 1, 2]
+    assert (steps["event"] == TraceEvent.INTERACTION).all()
+
+
+def test_trace_ends_with_max_scattering(backend):
+    sim = _diamond_ball_simulation(backend, max_scattering_count=3)
+    sim.run()
+    ray = int(np.flatnonzero(sim.get_output_buffer(OutputType.RAY_STATE) == 2)[0])
+    sim.trace_rays = [ray]
+    sim.run()
+    steps = sim.get_trace()
+    assert len(steps) == 4
+    assert steps["event"][-1] == TraceEvent.MAX_SCATTERING
+    assert np.array_equal(steps["origin_in"][-1], steps["origin_out"][-1])
+
+
+def test_traces_are_checked(backend):
+    sim = _diamond_ball_simulation(backend, rays=100)
+    with pytest.raises(RuntimeError, match="traced"):
+        sim.get_trace()
+    sim.run()
+    with pytest.raises(RuntimeError, match="traced"):
+        sim.get_trace()
+    with pytest.raises(ValueError, match="256"):
+        sim.trace_rays = list(range(257))
+    with pytest.raises(ValueError, match="max_trace_steps"):
+        sim.max_trace_steps = 0
+    sim.trace_rays = [100]
+    with pytest.raises(ValueError, match="100 rays"):
+        sim.run()
+    sim.trace_rays = [4, 2, 4]
+    assert sim.trace_rays == [2, 4]
+    sim.run()
+    assert sorted(set(sim.get_trace()["ray"])) == [2, 4]
+
+
+def test_a_run_without_traced_rays_still_works_after_a_traced_one(backend):
+    sim = _diamond_ball_simulation(backend, rays=500)
+    sim.run()
+    plain = sim.get_output_buffer(OutputType.SCATTERING_COUNT).copy()
+    sim.trace_rays = [1, 2]
+    sim.run()
+    assert np.array_equal(sim.get_output_buffer(OutputType.SCATTERING_COUNT), plain)
+    sim.trace_rays = []
+    sim.run()
+    assert np.array_equal(sim.get_output_buffer(OutputType.SCATTERING_COUNT), plain)
+    with pytest.raises(RuntimeError, match="traced"):
+        sim.get_trace()
+
+
+def test_traces_agree_between_backends(backends):
+    if len(backends) < 2:
+        pytest.skip("needs two backends")
+    traces = []
+    for backend in backends:
+        sim = _diamond_ball_simulation(backend, rays=200)
+        sim.trace_rays = [1, 2, 3]
+        sim.run()
+        traces.append(sim.get_trace())
+    first, second = traces
+    for ray in (1, 2, 3):
+        a, b = first[first["ray"] == ray], second[second["ray"] == ray]
+        n = 3  # the rays follow the same random numbers; later steps may differ in the last bits
+        assert len(a) >= n and len(b) >= n
+        for field in ("origin_in", "direction_in", "origin_out", "direction_out", "stokes"):
+            assert np.allclose(a[field][:n], b[field][:n], atol=1e-3), field
+
+
+@pytest.fixture
+def restore_verbosity():
+    was_verbose = photontracer.is_verbose()
+    yield
+    photontracer.set_verbose(was_verbose)
+
+
+def test_the_library_is_quiet_unless_verbose(backend, capfd, restore_verbosity):
+    assert not photontracer.is_verbose()
+    capfd.readouterr()
+    sim = _box_simulation(backend, _materials(2))
+    sim.run()
+    captured = capfd.readouterr()
+    assert captured.out == ""
+
+    photontracer.set_verbose(True)
+    sim = _box_simulation(backend, _materials(2))
+    sim.run()
+    assert "Starting simulation" in capfd.readouterr().out
+
+
+def _run_parallel_source(backend, generator):
+    """Run a beam onto a slab at z=0 and return the source positions and directions of the rays."""
+    sim = Simulation(backend=backend)
+    slab = trimesh.creation.box(extents=[100, 100, 1], transform=trimesh.transformations.translation_matrix([0, 0, -0.5]))
+    sim.wavelength_um = 1
+    sim.geometry = MeshGeometry(slab.vertices, slab.faces)
+    sim.materials = [Material(MaterialType.REFRACTIVE, 1 + 0j), Material(MaterialType.REFRACTIVE, 1.5 + 0j)]
+    sim.ray_generator = generator
+    sim.outputs = [OutputType.SOURCE_POSITION, OutputType.SOURCE_DIRECTION]
+    sim.run()
+    return sim.get_output_buffer(OutputType.SOURCE_POSITION), sim.get_output_buffer(OutputType.SOURCE_DIRECTION)
+
+
+def test_disk_is_perpendicular_to_the_beam_by_default(backend):
+    k = np.array([np.sin(np.pi / 3), 0, np.cos(np.pi / 3)])
+    gen = ParallelRayGenerator(number_of_rays=20000, origin=-10 * k, direction=k, offset_radius=3)
+    assert np.allclose(gen.disk_normal, k)
+    pos, _ = _run_parallel_source(backend, gen)
+    assert np.allclose((pos - (-10 * k)) @ k, 0, atol=1e-4)
+
+
+def test_disk_normal_puts_the_disk_in_a_horizontal_plane(backend):
+    angle = np.radians(70)
+    k = np.array([np.sin(angle), 0, np.cos(angle)])
+    origin = np.array([0, 0, -20.0])
+    radius = 3.0
+    gen = ParallelRayGenerator(number_of_rays=40000, origin=origin, direction=k, offset_radius=radius,
+                               disk_normal=[0, 0, 1])
+    assert np.allclose(gen.disk_normal, [0, 0, 1])
+    pos, direction = _run_parallel_source(backend, gen)
+
+    # all rays start in the horizontal plane through the origin, within the disk, and travel along k
+    assert np.allclose(pos[:, 2], origin[2], atol=1e-4)
+    r = np.linalg.norm(pos[:, :2] - origin[:2], axis=1)
+    assert r.max() <= radius * (1 + 1e-4)
+    assert r.max() > 0.98 * radius
+    assert np.allclose(direction, k, atol=1e-6)
+    # uniform in the disk: a quarter of the points within half of the radius
+    assert np.mean(r < radius / 2) == pytest.approx(0.25, abs=0.02)
+
+    # the footprint on the plane z=0 is a circle of the same radius, shifted along the beam
+    hit = pos[:, :2] - pos[:, 2:3] / k[2] * k[:2]
+    shift = -origin[2] / k[2] * k[:2]
+    assert np.allclose(hit.mean(axis=0), shift, atol=0.1)
+    assert np.linalg.norm(hit - shift, axis=1).max() == pytest.approx(radius, rel=0.02)
+
+
+def test_disk_normal_can_be_changed_and_reset():
+    k = [0, 0, 1]
+    gen = ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 0], direction=k, offset_radius=1,
+                               disk_normal=[1, 0, 1])
+    assert np.allclose(gen.disk_normal, np.array([1, 0, 1]) / np.sqrt(2))
+    gen.disk_normal = None
+    assert np.allclose(gen.disk_normal, k)
+    gen.disk_normal = [0, 1, 1]
+    assert np.allclose(gen.disk_normal, np.array([0, 1, 1]) / np.sqrt(2))
+
+
+def test_parallel_direction_is_normalised():
+    gen = ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 0], direction=[0, 0, -2], offset_radius=1)
+    assert np.allclose(gen.direction, [0, 0, -1])
+    gen.direction = [3, 0, 4]
+    assert np.allclose(gen.direction, [0.6, 0, 0.8])
+
+
+def test_disk_normal_perpendicular_to_the_beam_is_rejected(backend):
+    with pytest.raises(ValueError, match="disk_normal"):
+        ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 0], direction=[0, 0, 1], offset_radius=1,
+                             disk_normal=[1, 0, 0])
+    # a direction set afterwards that makes the disk degenerate is caught when the simulation runs
+    gen = ParallelRayGenerator(number_of_rays=10, origin=[0, 0, 5], direction=[0, 0, -1], offset_radius=1,
+                               disk_normal=[0, 0, 1])
+    gen.direction = [1, 0, 0]
+    with pytest.raises(ValueError, match="disk_normal"):
+        _run_parallel_source(backend, gen)

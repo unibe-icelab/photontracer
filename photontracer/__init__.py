@@ -5,6 +5,16 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     from .photontracer_bindings import (
         is_cuda_available,
+        available_backends,
+        set_verbose,
+        is_verbose,
+        Backend,
+        TraceEvent,
+        OPTIX,
+        EMBREE,
+        RandomNumberGenerator,
+        PCG32,
+        MRG32K3A,
         GeometryType,
         MESH,
         MESH_INSTANCED,
@@ -31,9 +41,8 @@ try:
         SOURCE_POSITION,
         SCATTERING_ANGLE,
         Q_MINUS_AXIS_IN,
-        LOGS,
-        LOG_OFFSETS,
         DIRECTION_HISTOGRAM_HEALPIX,
+        FIRST_POSITION,
         RefractiveIndex,
         MaterialProperties,
         Material,
@@ -44,9 +53,9 @@ try:
         IRayGenerator,
         ParallelRayGenerator,
         IsotropicRayGenerator,
+        DiffuseRayGenerator,
         CameraRayGenerator,
     )
-    assert is_cuda_available(), "CUDA is not available. Please ensure that CUDA is installed and a compatible GPU is present."
 except ImportError as e:
     error_msg = (
         "Failed to import photontracer\n\n"
@@ -58,6 +67,16 @@ except ImportError as e:
 # Define the export surface for ``from photontracer import *``.
 __all__ = [
     'is_cuda_available',
+    'available_backends',
+    'set_verbose',
+    'is_verbose',
+    'Backend',
+    'TraceEvent',
+    'OPTIX',
+    'EMBREE',
+    'RandomNumberGenerator',
+    'PCG32',
+    'MRG32K3A',
     'GeometryType',
     'MESH',
     'MESH_INSTANCED',
@@ -84,9 +103,8 @@ __all__ = [
     'SOURCE_POSITION',
     'SCATTERING_ANGLE',
     'Q_MINUS_AXIS_IN',
-    'LOGS',
-    'LOG_OFFSETS',
     'DIRECTION_HISTOGRAM_HEALPIX',
+    'FIRST_POSITION',
     'RefractiveIndex',
     'MaterialProperties',
     'Material',
@@ -97,22 +115,9 @@ __all__ = [
     'IRayGenerator',
     'ParallelRayGenerator',
     'IsotropicRayGenerator',
+    'DiffuseRayGenerator',
     'CameraRayGenerator',
 ]
-
-# Patch Simulation.run() to flush stdout before running the simulation
-# This ensures that jupyter notebooks display that the simulation is running
-_original_run = Simulation.run
-
-
-def _patched_run(self, *args, **kwargs):
-    import sys
-    print("Starting simulation")
-    sys.stdout.flush()
-    return _original_run(self, *args, **kwargs)
-
-
-Simulation.run = _patched_run
 
 try:
     __version__ = version("photontracer")

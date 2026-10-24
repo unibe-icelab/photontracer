@@ -4,11 +4,12 @@ on:
     types: [ assigned, opened, synchronize, reopened, labeled, unlabeled ]
     branches:
       - main
+      - dev
 jobs:
   Check-Changelog:
     name: Check Changelog Action
     runs-on: ubuntu-latest
     steps:
-      - uses: tarides/changelog-check-action@v2
+      - uses: tarides/changelog-check-action@v4
         with:
           changelog: CHANGELOG.md

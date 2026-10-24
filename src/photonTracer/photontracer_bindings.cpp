@@ -4,163 +4,230 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
-#include <cuda_runtime.h>
+#include <algorithm>
+#include <cstring>
 #include <limits>
+#include <optional>
 #include <vector>
 
+#include "backend_factory.h"
+#include "log.h"
 #include "simulation.h"
 #include "geometries/mesh_geometry.h"
 #include "geometries/instance_geometry.h"
 #include "photontracer.h" // For enums such as GeometryType, MaterialType, Material, etc.
+#include "photontracer_bindings_doc.h"
 
 namespace py = pybind11;
 
-float3 toFloat3(py::object obj, const std::string &name)
+namespace PYBIND11_NAMESPACE
 {
-    float3 result;
+namespace detail
+{
+/// Converts a float vector from a NumPy array, tuple or list of N numbers, and to a tuple
+template <typename Vector, size_t N>
+struct float_vector_caster
+{
+    static_assert(sizeof(Vector) == N * sizeof(float), "the components are copied as packed floats");
 
-    if (py::isinstance<py::array>(obj))
+    bool load(handle src, bool)
     {
-        auto arr = py::cast<py::array_t<float>>(obj);
-        if (arr.size() != 3)
+        float components[N];
+        if (isinstance<array>(src))
         {
-            throw py::value_error(name + " array must have exactly 3 elements");
+            auto values = array_t<float, array::c_style | array::forcecast>::ensure(src);
+            if (!values)
+            {
+                return false;
+            }
+            if (values.size() != static_cast<ssize_t>(N))
+            {
+                throw value_error("expected " + std::to_string(N) + " values, got an array of " + std::to_string(values.size()));
+            }
+            std::copy(values.data(), values.data() + N, components);
         }
-        auto ptr = arr.unchecked<1>();
-        result.x = ptr(0);
-        result.y = ptr(1);
-        result.z = ptr(2);
-    }
-    else if (py::isinstance<py::tuple>(obj) || py::isinstance<py::list>(obj))
-    {
-        auto seq = py::cast<py::sequence>(obj);
-        if (seq.size() != 3)
+        else if (isinstance<tuple>(src) || isinstance<list>(src))
         {
-            throw py::value_error(name + " sequence must have exactly 3 elements");
+            const auto values = reinterpret_borrow<sequence>(src);
+            if (values.size() != N)
+            {
+                throw value_error("expected " + std::to_string(N) + " values, got " + std::to_string(values.size()));
+            }
+            for (size_t i = 0; i < N; ++i)
+            {
+                make_caster<float> component;
+                if (!component.load(values[i], true))
+                {
+                    return false;
+                }
+                components[i] = cast_op<float>(component);
+            }
         }
-        result.x = py::cast<float>(seq[0]);
-        result.y = py::cast<float>(seq[1]);
-        result.z = py::cast<float>(seq[2]);
-    }
-    else
-    {
-        throw py::type_error(name + " must be array, tuple, or list of 3 floats");
+        else
+        {
+            return false;
+        }
+        std::memcpy(&value, components, sizeof(Vector));
+        return true;
     }
 
-    return result;
+    static handle cast(const Vector &src, return_value_policy, handle)
+    {
+        const float *components = reinterpret_cast<const float *>(&src);
+        tuple result(N);
+        for (size_t i = 0; i < N; ++i)
+        {
+            result[i] = float_(components[i]);
+        }
+        return result.release();
+    }
+
+    Vector value;
+};
+
+// The input types are defined in photontracer/_typing.py
+template <>
+struct type_caster<float3> : float_vector_caster<float3, 3>
+{
+    static constexpr auto name = io_name("photontracer._typing.Vector3", "tuple[float, float, float]");
+    template <typename T>
+    using cast_op_type = movable_cast_op_type<T>;
+    operator float3 *() { return &value; }
+    operator float3 &() { return value; }
+    operator float3 &&() && { return std::move(value); }
+};
+
+template <>
+struct type_caster<float4> : float_vector_caster<float4, 4>
+{
+    static constexpr auto name = io_name("photontracer._typing.Vector4", "tuple[float, float, float, float]");
+    template <typename T>
+    using cast_op_type = movable_cast_op_type<T>;
+    operator float4 *() { return &value; }
+    operator float4 &() { return value; }
+    operator float4 &&() && { return std::move(value); }
+};
+} // namespace detail
+} // namespace PYBIND11_NAMESPACE
+
+namespace
+{
+Material makeDiffuse(float albedo)
+{
+    if (albedo < 0.0f || albedo > 1.0f)
+    {
+        throw py::value_error("albedo must be in [0, 1], got " + std::to_string(albedo));
+    }
+    Material mat{};
+    mat.type = DIFFUSE;
+    mat.properties.diffuse.albedo = albedo;
+    return mat;
 }
 
-float4 toFloat4(py::object obj, const std::string &name)
+Material makeReflective(float reflectivity, float fuzziness)
 {
-    float4 result;
-
-    if (py::isinstance<py::array>(obj))
+    if (reflectivity < 0.0f || reflectivity > 1.0f)
     {
-        auto arr = py::cast<py::array_t<float>>(obj);
-        if (arr.size() != 4)
-        {
-            throw py::value_error(name + " array must have exactly 4 elements");
-        }
-        auto ptr = arr.unchecked<1>();
-        result.x = ptr(0);
-        result.y = ptr(1);
-        result.z = ptr(2);
-        result.w = ptr(3);
+        throw py::value_error("reflectivity must be in [0, 1], got " + std::to_string(reflectivity));
     }
-    else if (py::isinstance<py::tuple>(obj) || py::isinstance<py::list>(obj))
+    if (fuzziness < 0.0f || fuzziness >= 1.0f)
     {
-        auto seq = py::cast<py::sequence>(obj);
-        if (seq.size() != 4)
-        {
-            throw py::value_error(name + " sequence must have exactly 4 elements");
-        }
-        result.x = py::cast<float>(seq[0]);
-        result.y = py::cast<float>(seq[1]);
-        result.z = py::cast<float>(seq[2]);
-        result.w = py::cast<float>(seq[3]);
+        throw py::value_error("fuzziness must be in [0, 1), got " + std::to_string(fuzziness));
     }
-    else
-    {
-        throw py::type_error(name + " must be array, tuple, or list of 4 floats");
-    }
-
-    return result;
+    Material mat{};
+    mat.type = REFLECTIVE;
+    mat.properties.reflective.reflectivity = reflectivity;
+    mat.properties.reflective.fuzziness = fuzziness;
+    return mat;
 }
 
-py::object toPyObject(const float4 &vec)
+Material makeRefractive(RefractiveIndex refractiveIndex)
 {
-    return py::make_tuple(vec.x, vec.y, vec.z, vec.w);
+    Material mat{};
+    mat.type = REFRACTIVE;
+    mat.properties.refractive.refractiveIndex = refractiveIndex;
+    return mat;
 }
-
-py::object toPyObject(const float3 &vec)
-{
-    return py::make_tuple(vec.x, vec.y, vec.z);
-}
+} // namespace
 
 PYBIND11_MODULE(photontracer_bindings, m)
 {
-    m.doc() = "Python bindings for the Photontracer simulation and geometry functionality";
+    m.doc() = doc::module;
 
     // Expose enums.
-    py::enum_<GeometryType>(m, "GeometryType")
-        .value("MESH", MESH)
-        .value("MESH_INSTANCED", MESH_INSTANCED)
+    py::enum_<GeometryType>(m, "GeometryType", "Type of a geometry, returned by IGeometry.get_type().")
+        .value("MESH", MESH, "A single triangle mesh (MeshGeometry).")
+        .value("MESH_INSTANCED", MESH_INSTANCED, "Instances of geometries placed by transforms (InstanceGeometry).")
         .export_values();
 
-    py::enum_<LengthUnit>(m, "LengthUnit")
-        .value("MICRO_METER", LengthUnit::MICRO_METER)
-        .value("MILLI_METER", LengthUnit::MILLI_METER)
-        .value("METER", LengthUnit::METER)
+    py::enum_<RandomNumberGenerator>(m, "RandomNumberGenerator", doc::RandomNumberGenerator)
+        .value("PCG32", RandomNumberGenerator::PCG32,
+               "PCG32, the default. Cheap to seed, which matters most for scenes with little physics per ray.")
+        .value("MRG32K3A", RandomNumberGenerator::MRG32K3A,
+               "curand's MRG32k3a, the generator of the 1.0 releases. OptiX only.")
         .export_values();
 
-    py::enum_<MaterialType>(m, "MaterialType")
-        .value("DIFFUSE", DIFFUSE)
-        .value("REFRACTIVE", REFRACTIVE)
-        .value("REFLECTIVE", REFLECTIVE)
-        .value("VOLUME_SCATTERING", VOLUME_SCATTERING)
+    py::enum_<BackendType>(m, "Backend", "Where a Simulation traces its rays; pass one as backend to Simulation.")
+        .value("OPTIX", BackendType::OPTIX, "NVIDIA GPU with OptiX.")
+        .value("EMBREE", BackendType::EMBREE, "CPU with Embree and TBB. Supports only the PCG32 generator.")
         .export_values();
 
-    py::enum_<OutputType>(m, "OutputType")
-        .value("LAST_DIRECTION", OutputType::LAST_DIRECTION)
-        .value("LAST_POSITION", OutputType::LAST_POSITION)
-        .value("RAY_STATE", OutputType::RAY_STATE)
-        .value("LAST_MEDIUM_ID", OutputType::LAST_MEDIUM_ID)
-        .value("SCATTERING_COUNT", OutputType::SCATTERING_COUNT)
-        .value("NUMBER_OF_WARNINGS", OutputType::NUMBER_OF_WARNINGS)
-        .value("STOKES_VECTOR", OutputType::STOKES_VECTOR)
-        .value("STOKES_VECTOR_IN", OutputType::STOKES_VECTOR_IN)
-        .value("OPTICAL_PATH_LENGTH", OutputType::OPTICAL_PATH_LENGTH)
-        .value("SOURCE_DIRECTION", OutputType::SOURCE_DIRECTION)
-        .value("SOURCE_POSITION", OutputType::SOURCE_POSITION)
-        .value("SCATTERING_ANGLE", OutputType::SCATTERING_ANGLE)
-        .value("Q_MINUS_AXIS_IN", OutputType::Q_MINUS_AXIS_IN)
-        .value("LOGS", OutputType::LOGS)
-        .value("LOG_OFFSETS", OutputType::LOG_OFFSETS)
-        .value("DIRECTION_HISTOGRAM_HEALPIX", OutputType::DIRECTION_HISTOGRAM_HEALPIX)
+    py::enum_<TraceEvent>(m, "TraceEvent", "What happened to a traced ray in one step (event field of Simulation.get_trace()).")
+        .value("INTERACTION", TRACE_INTERACTION, "Reflected, refracted or scattered; the ray goes on.")
+        .value("ESCAPED", TRACE_ESCAPED, "The ray left the scene.")
+        .value("ABSORBED", TRACE_ABSORBED, "The ray was absorbed.")
+        .value("MAX_SCATTERING", TRACE_MAX_SCATTERING, "The ray reached Simulation.max_scattering_count.")
+        .value("ERROR", TRACE_ERROR, "The ray ended on an error.");
+
+    py::enum_<LengthUnit>(m, "LengthUnit", doc::LengthUnit)
+        .value("MICRO_METER", LengthUnit::MICRO_METER, "Micrometres (μm).")
+        .value("MILLI_METER", LengthUnit::MILLI_METER, "Millimetres (mm).")
+        .value("METER", LengthUnit::METER, "Metres (m).")
+        .export_values();
+
+    py::enum_<MaterialType>(m, "MaterialType", doc::MaterialType)
+        .value("DIFFUSE", DIFFUSE, "Lambertian reflection with an albedo in [0, 1]; the rest is absorbed.")
+        .value("REFRACTIVE", REFRACTIVE,
+               "Fresnel reflection and refraction at the surface of a medium with a complex refractive index n + ik.")
+        .value("REFLECTIVE", REFLECTIVE,
+               "Specular (metallic) reflection with a reflectivity in [0, 1] and an optional fuzziness in [0, 1).")
+        .value("VOLUME_SCATTERING", VOLUME_SCATTERING,
+               "A participating medium with a complex refractive index, a scattering coefficient and a "
+               "Henyey-Greenstein asymmetry parameter g.")
+        .export_values();
+
+    py::enum_<OutputType>(m, "OutputType", doc::OutputType)
+        .value("LAST_DIRECTION", OutputType::LAST_DIRECTION, doc::OutputType_LAST_DIRECTION)
+        .value("LAST_POSITION", OutputType::LAST_POSITION, doc::OutputType_LAST_POSITION)
+        .value("RAY_STATE", OutputType::RAY_STATE, doc::OutputType_RAY_STATE)
+        .value("LAST_MEDIUM_ID", OutputType::LAST_MEDIUM_ID, doc::OutputType_LAST_MEDIUM_ID)
+        .value("SCATTERING_COUNT", OutputType::SCATTERING_COUNT, doc::OutputType_SCATTERING_COUNT)
+        .value("NUMBER_OF_WARNINGS", OutputType::NUMBER_OF_WARNINGS, doc::OutputType_NUMBER_OF_WARNINGS)
+        .value("STOKES_VECTOR", OutputType::STOKES_VECTOR, doc::OutputType_STOKES_VECTOR)
+        .value("STOKES_VECTOR_IN", OutputType::STOKES_VECTOR_IN, doc::OutputType_STOKES_VECTOR_IN)
+        .value("OPTICAL_PATH_LENGTH", OutputType::OPTICAL_PATH_LENGTH, doc::OutputType_OPTICAL_PATH_LENGTH)
+        .value("SOURCE_DIRECTION", OutputType::SOURCE_DIRECTION, doc::OutputType_SOURCE_DIRECTION)
+        .value("SOURCE_POSITION", OutputType::SOURCE_POSITION, doc::OutputType_SOURCE_POSITION)
+        .value("SCATTERING_ANGLE", OutputType::SCATTERING_ANGLE, doc::OutputType_SCATTERING_ANGLE)
+        .value("Q_MINUS_AXIS_IN", OutputType::Q_MINUS_AXIS_IN, doc::OutputType_Q_MINUS_AXIS_IN)
+        .value("DIRECTION_HISTOGRAM_HEALPIX", OutputType::DIRECTION_HISTOGRAM_HEALPIX, doc::OutputType_DIRECTION_HISTOGRAM_HEALPIX)
+        .value("FIRST_POSITION", OutputType::FIRST_POSITION, doc::OutputType_FIRST_POSITION)
         .export_values();
 
     // Bind RefractiveIndex with support for Python complex numbers.
-    py::class_<RefractiveIndex>(m, "RefractiveIndex")
-        .def(py::init<>())
-        .def(py::init<float, float>(), py::arg("r"), py::arg("i"))
+    py::class_<RefractiveIndex>(m, "RefractiveIndex", doc::RefractiveIndex)
+        .def(py::init<>(), "Create a refractive index of 0.")
+        .def(py::init<float, float>(), py::arg("r"), py::arg("i"), "Create a refractive index r + i·j from its real and imaginary parts.")
         // Add constructor that takes a Python complex number
-        .def(py::init([](const std::complex<float> &c)
-                      {
-            RefractiveIndex ri;
-            ri.r = c.real();
-            ri.i = c.imag();
-            return ri; }),
-             py::arg("complex_value"))
-        // Add constructor that takes a Python complex number (double precision)
         .def(py::init([](const std::complex<double> &c)
                       {
             RefractiveIndex ri;
             ri.r = static_cast<float>(c.real());
             ri.i = static_cast<float>(c.imag());
             return ri; }),
-             py::arg("complex_value"))
-        .def_readwrite("r", &RefractiveIndex::r)
-        .def_readwrite("i", &RefractiveIndex::i)
+             py::arg("complex_value"), "Create a refractive index from a complex number, e.g. 1.31+0j.")
+        .def_readwrite("r", &RefractiveIndex::r, "Real part n of the refractive index.")
+        .def_readwrite("i", &RefractiveIndex::i, "Imaginary part k of the refractive index, the extinction coefficient.")
         // Add property to get/set as complex number
         .def_property("complex",
                       // Getter: return as Python complex
@@ -168,50 +235,59 @@ PYBIND11_MODULE(photontracer_bindings, m)
                       { return std::complex<float>(ri.r, ri.i); },
                       // Setter: accept Python complex
                       [](RefractiveIndex &ri, const std::complex<float> &c)
-                      { 
-                ri.r = c.real(); 
-                ri.i = c.imag(); })
+                      {
+                ri.r = c.real();
+                ri.i = c.imag(); },
+                      "The refractive index as a complex number n + ik.")
         .def("__repr__", [](const RefractiveIndex &ri)
              { return "<RefractiveIndex (real=" + std::to_string(ri.r) +
                       ", imag=" + std::to_string(ri.i) + ")>"; });
 
     // Bind the Diffuse variant inside MaterialProperties.
-    py::class_<MaterialProperties::Diffuse>(m, "Diffuse")
+    py::class_<MaterialProperties::Diffuse>(m, "Diffuse", "Properties of a Lambertian (diffuse) surface.")
         .def(py::init<>())
-        .def_readwrite("albedo", &MaterialProperties::Diffuse::albedo)
+        .def_readwrite("albedo", &MaterialProperties::Diffuse::albedo,
+                       "Fraction of the light reflected diffusely, in [0, 1]; the rest is absorbed.")
         .def("__repr__", [](const MaterialProperties::Diffuse &l)
              { return "<Diffuse albedo=" + std::to_string(l.albedo) + ">"; });
 
     // Bind the Refractive variant inside MaterialProperties.
-    py::class_<MaterialProperties::Refractive>(m, "Refractive")
+    py::class_<MaterialProperties::Refractive>(m, "Refractive",
+                                               "Properties of a refractive medium: Fresnel reflection and refraction at its surface.")
         .def(py::init<>())
-        .def_readwrite("refractive_index", &MaterialProperties::Refractive::refractiveIndex)
+        .def_readwrite("refractive_index", &MaterialProperties::Refractive::refractiveIndex,
+                       "Complex refractive index n + ik of the medium; k causes absorption inside it.")
         .def("__repr__", [](const MaterialProperties::Refractive &r)
              { return "<Refractive refractive_index=" + std::to_string(r.refractiveIndex.r) +
                       " + " + std::to_string(r.refractiveIndex.i) + "i>"; });
 
     // Bind the Reflective variant inside MaterialProperties.
-    py::class_<MaterialProperties::Reflective>(m, "Reflective")
+    py::class_<MaterialProperties::Reflective>(m, "Reflective", "Properties of a metallic (specular) surface.")
         .def(py::init<>())
-        .def_readwrite("reflectivity", &MaterialProperties::Reflective::reflectivity)
-        .def_readwrite("fuzziness", &MaterialProperties::Reflective::fuzziness)
+        .def_readwrite("reflectivity", &MaterialProperties::Reflective::reflectivity,
+                       "Fraction of the light reflected, in [0, 1]; the rest is absorbed.")
+        .def_readwrite("fuzziness", &MaterialProperties::Reflective::fuzziness,
+                       "Roughness in [0, 1): 0 is a perfect mirror, values towards 1 spread the reflection over nearly a hemisphere.")
         .def("__repr__", [](const MaterialProperties::Reflective &r)
              { return "<Reflective reflectivity=" + std::to_string(r.reflectivity) +
                       ", fuzziness=" + std::to_string(r.fuzziness) + ">"; });
 
     // Bind the VolumeScattering variant inside MaterialProperties.
-    py::class_<MaterialProperties::VolumeScattering>(m, "VolumeScattering")
+    py::class_<MaterialProperties::VolumeScattering>(m, "VolumeScattering", doc::VolumeScattering)
         .def(py::init<>())
-        .def_readwrite("refractive_index", &MaterialProperties::VolumeScattering::refractiveIndex)
-        .def_readwrite("scattering_coefficient", &MaterialProperties::VolumeScattering::scatteringCoefficient)
-        .def_readwrite("asymetry_parameter", &MaterialProperties::VolumeScattering::asymetryParameter)
+        .def_readwrite("refractive_index", &MaterialProperties::VolumeScattering::refractiveIndex,
+                       "Complex refractive index n + ik of the medium; k gives the absorption coefficient.")
+        .def_readwrite("scattering_coefficient", &MaterialProperties::VolumeScattering::scatteringCoefficient,
+                       "Scattering coefficient per geometry unit (Simulation.length_unit).")
+        .def_readwrite("asymetry_parameter", &MaterialProperties::VolumeScattering::asymetryParameter,
+                       "Henyey-Greenstein asymmetry parameter g in (-1, 1): 0 isotropic, > 0 forward, < 0 backward scattering.")
         .def("__repr__", [](const MaterialProperties::VolumeScattering &v)
              { return "<VolumeScattering refractive_index=" + std::to_string(v.refractiveIndex.r) +
                       " + " + std::to_string(v.refractiveIndex.i) + "i, scattering_coefficient=" +
                       std::to_string(v.scatteringCoefficient) + ", asymetry_parameter=" + std::to_string(v.asymetryParameter) + ">"; });
 
     // Bind MaterialProperties as a whole, providing property getters/setters for each variant.
-    py::class_<MaterialProperties>(m, "MaterialProperties")
+    py::class_<MaterialProperties>(m, "MaterialProperties", doc::MaterialProperties)
         .def(py::init([]()
                       {
             MaterialProperties mp = {};
@@ -222,51 +298,65 @@ PYBIND11_MODULE(photontracer_bindings, m)
                       { return mp.diffuse; },
                       // Setter: set the diffuse field.
                       [](MaterialProperties &mp, const MaterialProperties::Diffuse &l)
-                      { mp.diffuse = l; }, "Access Diffuse properties")
+                      { mp.diffuse = l; }, "Properties of a DIFFUSE material.")
         .def_property("refractive",
                       // Getter: return a reference to the Refractive struct.
                       [](MaterialProperties &mp) -> MaterialProperties::Refractive &
                       { return mp.refractive; },
                       // Setter: set the refractive field.
                       [](MaterialProperties &mp, const MaterialProperties::Refractive &r)
-                      { mp.refractive = r; }, "Access Refractive properties")
+                      { mp.refractive = r; }, "Properties of a REFRACTIVE material.")
         .def_property("reflective",
                       // Getter: return a reference to the Reflective struct.
                       [](MaterialProperties &mp) -> MaterialProperties::Reflective &
                       { return mp.reflective; },
                       // Setter: set the reflective field.
                       [](MaterialProperties &mp, const MaterialProperties::Reflective &r)
-                      { mp.reflective = r; }, "Access Reflective properties")
+                      { mp.reflective = r; }, "Properties of a REFLECTIVE material.")
         .def_property("volume_scattering",
                       // Getter: return a reference to the VolumeScattering struct.
                       [](MaterialProperties &mp) -> MaterialProperties::VolumeScattering &
                       { return mp.volumeScattering; },
                       // Setter: set the volumeScattering field.
                       [](MaterialProperties &mp, const MaterialProperties::VolumeScattering &v)
-                      { mp.volumeScattering = v; }, "Access VolumeScattering properties")
-        .def("__repr__", []()
+                      { mp.volumeScattering = v; }, "Properties of a VOLUME_SCATTERING material.")
+        .def("__repr__", [](const MaterialProperties &)
              { return "<MaterialProperties>"; });
 
     // Bind Material.
-    py::class_<Material>(m, "Material")
-        .def(py::init<>())
+    py::class_<Material>(m, "Material", doc::Material)
+        .def(py::init<>(), "Create a material without parameters.")
+        // A positional number for each type. It comes first: pybind11 stops at the first overload that
+        // matches, even if it throws, so the named overloads below would reject the other types.
+        .def(py::init([](MaterialType type, float value)
+                      {
+            switch (type) {
+            case DIFFUSE:
+                return makeDiffuse(value);
+            case REFLECTIVE:
+                return makeReflective(value, 0.0f);
+            case REFRACTIVE:
+                return makeRefractive(RefractiveIndex{value, 0.0f});
+            default:
+                throw py::value_error("A VOLUME_SCATTERING material needs refractive_index, scattering_coefficient and g");
+            } }),
+             py::arg("type"), py::arg("value"), py::pos_only(),
+             "Create a material from one number: the albedo of a DIFFUSE material, the reflectivity of a REFLECTIVE "
+             "material (a perfect mirror) or the real refractive index of a REFRACTIVE material.")
         // Constructor for REFRACTIVE material with complex refractive index
         .def(py::init([](MaterialType type, const std::complex<float> &refractive_index)
                       {
             if (type != REFRACTIVE) {
-                throw py::value_error("Complex refractive index can only be used with REFRACTIVE material type");
+                throw py::value_error("A complex refractive_index alone can only be used with the REFRACTIVE material type");
             }
-            Material mat;
-            mat.type = type;
-            mat.properties.refractive.refractiveIndex.r = refractive_index.real();
-            mat.properties.refractive.refractiveIndex.i = refractive_index.imag();
-            return mat; }),
-             py::arg("type"), py::arg("refractive_index"))
+            return makeRefractive(RefractiveIndex{refractive_index.real(), refractive_index.imag()}); }),
+             py::arg("type"), py::arg("refractive_index"),
+             "Create a REFRACTIVE material from a complex refractive index, e.g. 1.5+0j.")
         // Constructor for VOLUME_SCATTERING material with complex refractive index, scattering coefficient, and asymetryParameter
         .def(py::init([](MaterialType type, const std::complex<float> &refractive_index, float scattering_coefficient, float asymetryParameter)
                       {
             if (type != VOLUME_SCATTERING) {
-                throw py::value_error("Parameters can only be used with VOLUME_SCATTERING material type");
+                throw py::value_error("refractive_index, scattering_coefficient and g can only be used with the VOLUME_SCATTERING material type");
             }
             Material mat;
             mat.type = type;
@@ -275,64 +365,43 @@ PYBIND11_MODULE(photontracer_bindings, m)
             mat.properties.volumeScattering.scatteringCoefficient = scattering_coefficient;
             mat.properties.volumeScattering.asymetryParameter = asymetryParameter;
             return mat; }),
-             py::arg("type"), py::arg("refractive_index"), py::arg("scattering_coefficient"), py::arg("g"))
+             py::arg("type"), py::arg("refractive_index"), py::arg("scattering_coefficient"), py::arg("g"),
+             doc::Material_init_volume_scattering)
         // Constructor for DIFFUSE material with albedo
         .def(py::init([](MaterialType type, float albedo)
                       {
             if (type != DIFFUSE) {
-                throw py::value_error("Albedo parameter can only be used with DIFFUSE material type");
+                throw py::value_error("albedo can only be used with the DIFFUSE material type");
             }
-            if (albedo < 0.0f || albedo > 1.0f) {
-                throw py::value_error("Albedo must be between 0.0 and 1.0, got " + std::to_string(albedo));
-            }
-            Material mat;
-            mat.type = type;
-            mat.properties.diffuse.albedo = albedo;
-            return mat; }),
-             py::arg("type"), py::arg("albedo"))
+            return makeDiffuse(albedo); }),
+             py::arg("type"), py::arg("albedo"), "Create a DIFFUSE material with an albedo in [0, 1].")
         // Constructor for REFLECTIVE material with reflectivity and fuzziness
         .def(py::init([](MaterialType type, float reflectivity, float fuzziness)
                       {
             if (type != REFLECTIVE) {
-                throw py::value_error("Reflectivity and fuzziness can only be used with REFLECTIVE material type");
+                throw py::value_error("reflectivity and fuzziness can only be used with the REFLECTIVE material type");
             }
-            if (reflectivity < 0.0f || reflectivity > 1.0f) {
-                throw py::value_error("Reflectivity must be between in [0.0, 1.0], got " + std::to_string(reflectivity));
-            }
-            if (fuzziness < 0.0f || fuzziness >= 1.0f) {
-                throw py::value_error("Fuzziness must be between in [0.0, 1.0), got " + std::to_string(fuzziness));
-            }
-            Material mat;
-            mat.type = type;
-            mat.properties.reflective.reflectivity = reflectivity;
-            mat.properties.reflective.fuzziness = fuzziness;
-            return mat; }),
-             py::arg("type"), py::arg("reflectivity"), py::arg("fuzziness"))
+            return makeReflective(reflectivity, fuzziness); }),
+             py::arg("type"), py::arg("reflectivity"), py::arg("fuzziness"),
+             "Create a REFLECTIVE material with a reflectivity in [0, 1] and a fuzziness in [0, 1).")
         // Constructor for REFLECTIVE material with reflectivity only (fuzziness=0)
         .def(py::init([](MaterialType type, float reflectivity)
                       {
             if (type != REFLECTIVE) {
-                throw py::value_error("Reflectivity can only be used with REFLECTIVE material type");
+                throw py::value_error("reflectivity can only be used with the REFLECTIVE material type");
             }
-            Material mat;
-            mat.type = type;
-            mat.properties.reflective.reflectivity = reflectivity;
-            mat.properties.reflective.fuzziness = 0.0f; // Default fuzziness to 0
-            return mat; }),
-             py::arg("type"), py::arg("reflectivity"))
+            return makeReflective(reflectivity, 0.0f); }),
+             py::arg("type"), py::arg("reflectivity"), "Create a REFLECTIVE material that is a perfect mirror (fuzziness 0).")
         // Constructor for REFRACTIVE material with RefractiveIndex object
         .def(py::init([](MaterialType type, const RefractiveIndex &ri)
                       {
             if (type != REFRACTIVE) {
-                throw py::value_error("RefractiveIndex can only be used with REFRACTIVE material type");
+                throw py::value_error("A RefractiveIndex can only be used with the REFRACTIVE material type");
             }
-            Material mat;
-            mat.type = type;
-            mat.properties.refractive.refractiveIndex = ri;
-            return mat; }),
-             py::arg("type"), py::arg("refractive_index"))
-        .def_readwrite("type", &Material::type)
-        .def_readwrite("properties", &Material::properties)
+            return makeRefractive(ri); }),
+             py::arg("type"), py::arg("refractive_index"), "Create a REFRACTIVE material from a RefractiveIndex.")
+        .def_readwrite("type", &Material::type, "How the material interacts with rays.")
+        .def_readwrite("properties", &Material::properties, "The parameters of the material; only those of its type are used.")
         .def("__repr__", [](const Material &mat)
              {
             std::string type_str = (mat.type == DIFFUSE) ? "DIFFUSE" : "REFRACTIVE";
@@ -352,13 +421,13 @@ PYBIND11_MODULE(photontracer_bindings, m)
             } });
 
     // Use std::shared_ptr as the holder type to match Simulation::setGeometry.
-    py::class_<IGeometry, std::shared_ptr<IGeometry>>(m, "IGeometry")
-        .def("get_type", &IGeometry::getType)
+    py::class_<IGeometry, std::shared_ptr<IGeometry>>(m, "IGeometry", doc::IGeometry)
+        .def("get_type", &IGeometry::getType, "Return the type of the geometry.")
         .def("free_device_memory", &IGeometry::freeDeviceMemory,
-             "Free device-side acceleration structure buffers owned by this geometry.");
+             "Free the acceleration structures of this geometry and its sub-geometries. The next Simulation.run() builds them again.");
 
-    py::class_<MeshGeometry, IGeometry, std::shared_ptr<MeshGeometry>>(m, "MeshGeometry")
-        .def(py::init([](py::array_t<float> vertices, py::array_t<unsigned int> indices)
+    py::class_<MeshGeometry, IGeometry, std::shared_ptr<MeshGeometry>>(m, "MeshGeometry", doc::MeshGeometry)
+        .def(py::init([](py::array_t<float> vertices, py::array_t<unsigned int> indices, bool compact)
                       {
         // Validate vertices array
         if (vertices.ndim() != 2) {
@@ -423,11 +492,11 @@ PYBIND11_MODULE(photontracer_bindings, m)
             }
         }
         
-        return std::make_shared<MeshGeometry>(std::move(vertex_vec), std::move(index_vec)); }),
-             py::arg("vertices"), py::arg("indices"));
+        return std::make_shared<MeshGeometry>(std::move(vertex_vec), std::move(index_vec), compact); }),
+             py::arg("vertices"), py::arg("indices"), py::arg("compact") = true, doc::MeshGeometry_init);
 
     // For InstanceGeometry with numpy arrays
-    py::class_<InstanceGeometry, IGeometry, std::shared_ptr<InstanceGeometry>>(m, "InstanceGeometry")
+    py::class_<InstanceGeometry, IGeometry, std::shared_ptr<InstanceGeometry>>(m, "InstanceGeometry", doc::InstanceGeometry)
         .def(
             py::init([](std::vector<std::shared_ptr<IGeometry>> sub_geometries,
                         py::array_t<float> instance_transforms,
@@ -497,6 +566,10 @@ PYBIND11_MODULE(photontracer_bindings, m)
                 std::vector<unsigned int> type_ids_vec;
                 type_ids_vec.reserve(type_ids_array.shape(0));
                 for (py::ssize_t i = 0; i < type_ids_array.shape(0); ++i) {
+                    if (type_ids_array(i) >= sub_geometries.size()) {
+                        throw py::value_error("particle_type_ids[" + std::to_string(i) + "] is " + std::to_string(type_ids_array(i)) +
+                                              ", out of range for " + std::to_string(sub_geometries.size()) + " sub_geometries");
+                    }
                     type_ids_vec.push_back(type_ids_array(i));
                 }
 
@@ -514,101 +587,149 @@ PYBIND11_MODULE(photontracer_bindings, m)
             py::arg("sub_geometries"),
             py::arg("instance_transforms"),
             py::arg("particle_type_ids"),
-            py::arg("material_ids"));
+            py::arg("material_ids"),
+            doc::InstanceGeometry_init);
 
-    py::class_<IRayGenerator, std::shared_ptr<IRayGenerator>>(m, "IRayGenerator");
+    py::class_<IRayGenerator, std::shared_ptr<IRayGenerator>>(m, "IRayGenerator", doc::IRayGenerator);
 
-    py::class_<ParallelRayGenerator, IRayGenerator, std::shared_ptr<ParallelRayGenerator>>(m, "ParallelRayGenerator")
-        .def(py::init([](int number_of_rays, py::object origin, py::object direction, float offset_radius)
-                      { return ParallelRayGenerator(
-                            number_of_rays,
-                            toFloat3(origin, "origin"),
-                            toFloat3(direction, "direction"),
-                            offset_radius); }),
-             py::arg("number_of_rays"), py::arg("origin"), py::arg("direction"), py::arg("offset_radius"))
-        .def_property("origin", [](const ParallelRayGenerator &self)
-                      { return toPyObject(self.getOrigin()); }, [](ParallelRayGenerator &self, py::object origin)
-                      { self.setOrigin(toFloat3(origin, "origin")); })
-        .def_property("direction", [](const ParallelRayGenerator &self)
-                      { return toPyObject(self.getDirection()); }, [](ParallelRayGenerator &self, py::object direction)
-                      { self.setDirection(toFloat3(direction, "direction")); })
-        .def_property("offset_radius", &ParallelRayGenerator::getOffsetRadius, &ParallelRayGenerator::setOffsetRadius);
+    py::class_<ParallelRayGenerator, IRayGenerator, std::shared_ptr<ParallelRayGenerator>>(m, "ParallelRayGenerator", doc::ParallelRayGenerator)
+        .def(py::init([](int number_of_rays, float3 origin, float3 direction, float offset_radius, std::optional<float3> disk_normal)
+                      {
+                          ParallelRayGenerator generator(number_of_rays, origin, direction, offset_radius);
+                          if (disk_normal)
+                          {
+                              generator.setDiskNormal(*disk_normal);
+                          }
+                          return generator; }),
+             py::arg("number_of_rays"), py::arg("origin"), py::arg("direction"), py::arg("offset_radius"),
+             py::arg("disk_normal") = py::none(), doc::ParallelRayGenerator_init)
+        .def_property("origin", &ParallelRayGenerator::getOrigin, &ParallelRayGenerator::setOrigin, "Centre of the source disk.")
+        .def_property("direction", &ParallelRayGenerator::getDirection, &ParallelRayGenerator::setDirection,
+                      "Unit direction of the beam; normalised when set.")
+        .def_property("disk_normal", &ParallelRayGenerator::getDiskNormal, [](ParallelRayGenerator &self, std::optional<float3> disk_normal)
+                      {
+                          if (disk_normal)
+                          {
+                              self.setDiskNormal(*disk_normal);
+                          }
+                          else
+                          {
+                              self.resetDiskNormal();
+                          } },
+                      "Unit normal of the plane of the source disk; equal to direction for a disk perpendicular to the beam. "
+                      "Setting None makes the disk perpendicular to the beam again.")
+        .def_property("offset_radius", &ParallelRayGenerator::getOffsetRadius, &ParallelRayGenerator::setOffsetRadius,
+                      "Radius of the source disk in geometry units.");
 
-    py::class_<IsotropicRayGenerator, IRayGenerator, std::shared_ptr<IsotropicRayGenerator>>(m, "IsotropicRayGenerator")
-        .def(py::init([](int number_of_rays, py::object center, float source_radius, float offset_radius)
-                      { return IsotropicRayGenerator(
-                            number_of_rays,
-                            toFloat3(center, "center"),
-                            source_radius,
-                            offset_radius); }),
-             py::arg("number_of_rays"), py::arg("center"), py::arg("source_radius"), py::arg("offset_radius"))
-        .def_property("center", [](const IsotropicRayGenerator &self)
-                      { return toPyObject(self.getCenter()); }, [](IsotropicRayGenerator &self, py::object center)
-                      { self.setCenter(toFloat3(center, "center")); })
-        .def_property("source_radius", &IsotropicRayGenerator::getSourceRadius, &IsotropicRayGenerator::setSourceRadius)
-        .def_property("offset_radius", &IsotropicRayGenerator::getOffsetRadius, &IsotropicRayGenerator::setOffsetRadius);
+    py::class_<IsotropicRayGenerator, IRayGenerator, std::shared_ptr<IsotropicRayGenerator>>(m, "IsotropicRayGenerator", doc::IsotropicRayGenerator)
+        .def(py::init<int, float3, float, float>(),
+             py::arg("number_of_rays"), py::arg("center"), py::arg("source_radius"), py::arg("offset_radius"),
+             doc::IsotropicRayGenerator_init)
+        .def_property("center", &IsotropicRayGenerator::getCenter, &IsotropicRayGenerator::setCenter, "Centre of the sphere the rays start on.")
+        .def_property("source_radius", &IsotropicRayGenerator::getSourceRadius, &IsotropicRayGenerator::setSourceRadius,
+                      "Radius of the sphere the rays start on.")
+        .def_property("offset_radius", &IsotropicRayGenerator::getOffsetRadius, &IsotropicRayGenerator::setOffsetRadius,
+                      "Radius in geometry units of the tangential shift of the ray origins.");
 
-    py::class_<CameraRayGenerator, IRayGenerator, std::shared_ptr<CameraRayGenerator>>(m, "CameraRayGenerator")
+    py::class_<DiffuseRayGenerator, IRayGenerator, std::shared_ptr<DiffuseRayGenerator>>(m, "DiffuseRayGenerator", doc::DiffuseRayGenerator)
+        .def(py::init<int, float3, float3, float>(),
+             py::arg("number_of_rays"), py::arg("origin"), py::arg("direction"), py::arg("offset_radius"),
+             doc::DiffuseRayGenerator_init)
+        .def_property("origin", &DiffuseRayGenerator::getOrigin, &DiffuseRayGenerator::setOrigin, "Centre of the source disk.")
+        .def_property("direction", &DiffuseRayGenerator::getDirection, &DiffuseRayGenerator::setDirection,
+                      "Unit axis of the hemisphere the rays are emitted into; normalised when set.")
+        .def_property("offset_radius", &DiffuseRayGenerator::getOffsetRadius, &DiffuseRayGenerator::setOffsetRadius,
+                      "Radius of the source disk in geometry units.");
+
+    py::class_<CameraRayGenerator, IRayGenerator, std::shared_ptr<CameraRayGenerator>>(m, "CameraRayGenerator", doc::CameraRayGenerator)
         .def(py::init<>())
-        .def_property("image_width", &CameraRayGenerator::getImageWidth, &CameraRayGenerator::setImageWidth)
-        .def_property("image_height", &CameraRayGenerator::getImageHeight, &CameraRayGenerator::setImageHeight)
-        .def_property("aspect_ratio", &CameraRayGenerator::getAspectRatio, &CameraRayGenerator::setAspectRatio)
-        .def_property("samples_per_pixel", &CameraRayGenerator::getSamplesPerPixel, &CameraRayGenerator::setSamplesPerPixel)
-        .def_property("vertical_fov", &CameraRayGenerator::getVerticalFov, &CameraRayGenerator::setVerticalFov)
-        .def_property("look_from", [](const CameraRayGenerator &self)
-                      { return toPyObject(self.getLookFrom()); }, [](CameraRayGenerator &self, py::object value)
-                      { self.setLookFrom(toFloat3(value, "look_from")); })
-        .def_property("look_at", [](const CameraRayGenerator &self)
-                      { return toPyObject(self.getLookAt()); }, [](CameraRayGenerator &self, py::object value)
-                      { self.setLookAt(toFloat3(value, "look_at")); })
-        .def_property("vertical_up", [](const CameraRayGenerator &self)
-                      { return toPyObject(self.getVerticalUp()); }, [](CameraRayGenerator &self, py::object value)
-                      { self.setVerticalUp(toFloat3(value, "vertical_up")); })
-        .def_property("defocus_angle", &CameraRayGenerator::getDefocusAngle, &CameraRayGenerator::setDefocusAngle)
-        .def_property("focus_distance", &CameraRayGenerator::getFocusDistance, &CameraRayGenerator::setFocusDistance);
+        .def_property("image_width", &CameraRayGenerator::getImageWidth, &CameraRayGenerator::setImageWidth, "Image width in pixels.")
+        .def_property("image_height", &CameraRayGenerator::getImageHeight, &CameraRayGenerator::setImageHeight, "Image height in pixels.")
+        .def_property("aspect_ratio", &CameraRayGenerator::getAspectRatio, &CameraRayGenerator::setAspectRatio, "Aspect ratio width / height.")
+        .def_property("samples_per_pixel", &CameraRayGenerator::getSamplesPerPixel, &CameraRayGenerator::setSamplesPerPixel,
+                      "Number of rays per pixel.")
+        .def_property("vertical_fov", &CameraRayGenerator::getVerticalFov, &CameraRayGenerator::setVerticalFov,
+                      "Vertical field of view in degrees.")
+        .def_property("look_from", &CameraRayGenerator::getLookFrom, &CameraRayGenerator::setLookFrom, "Position of the camera.")
+        .def_property("look_at", &CameraRayGenerator::getLookAt, &CameraRayGenerator::setLookAt, "Point the camera is aimed at.")
+        .def_property("vertical_up", &CameraRayGenerator::getVerticalUp, &CameraRayGenerator::setVerticalUp,
+                      "Up direction of the camera, which sets its roll.")
+        .def_property("defocus_angle", &CameraRayGenerator::getDefocusAngle, &CameraRayGenerator::setDefocusAngle,
+                      "Opening angle of the cone of rays through each pixel in degrees, for depth of field; 0 disables it.")
+        .def_property("focus_distance", &CameraRayGenerator::getFocusDistance, &CameraRayGenerator::setFocusDistance,
+                      "Distance from the camera to the plane in focus.");
 
-    py::class_<Simulation, std::shared_ptr<Simulation>>(m, "Simulation")
-        .def(py::init<int, int, bool>(), py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false)
-        .def("run", &Simulation::run, "Run the simulation")
-        .def("free_device_memory", &Simulation::freeDeviceMemory,
-             "Free device-side buffers held by the simulation (pipeline, outputs, and geometry acceleration structures).")
-        .def(
-            "calculate_volume_fraction",
-            [](Simulation &sim, py::object boxMin, py::object boxMax, uint32_t numSamples)
-            {
-                return sim.calculateVolumeFraction(
-                    toFloat3(boxMin, "box_min"),
-                    toFloat3(boxMax, "box_max"),
-                    numSamples);
-            },
-            py::arg("box_min"),
-            py::arg("box_max"),
-            py::arg("number_of_samples"),
-            "Use Monte-Carlo sampling to calculate the volume fraction in a given box")
+    py::class_<Simulation, std::shared_ptr<Simulation>>(m, "Simulation", doc::Simulation)
+        .def(py::init([](int gpuId, int optixLoggingLevel, bool enableValidationMode, std::optional<BackendType> backend, uint32_t cpuThreads)
+                      {
+                          const std::vector<BackendType> available = availableBackends();
+                          if (available.empty())
+                          {
+                              throw std::runtime_error("This build of photontracer contains no raytracing backend");
+                          }
+                          BackendOptions options;
+                          options.gpuId = gpuId;
+                          options.optixLoggingLevel = optixLoggingLevel;
+                          options.enableValidationMode = enableValidationMode;
+                          options.cpuThreads = cpuThreads;
+                          if (!backend)
+                          {
+                              backend = available.front();
+                              // A build with OptiX on a machine without a usable GPU, e.g. a wheel from PyPI
+                              const bool hasEmbree = std::find(available.begin(), available.end(), BackendType::EMBREE) != available.end();
+                              if (*backend == BackendType::OPTIX && hasEmbree && !isCudaAvailable())
+                              {
+                                  backend = BackendType::EMBREE;
+                                  if (PyErr_WarnEx(PyExc_RuntimeWarning,
+                                                   "No CUDA device is available, using the Embree backend on the CPU. "
+                                                   "Pass backend=Backend.EMBREE to select it explicitly.",
+                                                   1) < 0)
+                                  {
+                                      throw py::error_already_set();
+                                  }
+                              }
+                          }
+                          return std::make_unique<Simulation>(makeBackend(*backend, options)); }),
+             py::arg("gpu_id") = 0, py::arg("optix_logging_level") = 1, py::arg("enable_validation_mode") = false,
+             py::arg("backend") = py::none(), py::arg("cpu_threads") = 0, doc::Simulation_init)
+        .def("run", [](Simulation &sim)
+             {
+                 if (verboseOutput())
+                 {
+                     // flushed, so that Jupyter notebooks show that the simulation is running
+                     py::print("Starting simulation", py::arg("flush") = true);
+                 }
+                 sim.run(); },
+             doc::Simulation_run)
+        .def("free_device_memory", &Simulation::freeDeviceMemory, doc::Simulation_free_device_memory)
+        .def("calculate_volume_fraction", &Simulation::calculateVolumeFraction,
+             py::arg("box_min"),
+             py::arg("box_max"),
+             py::arg("number_of_samples"),
+             doc::Simulation_calculate_volume_fraction)
         .def("get_output_buffer", [](Simulation &sim, OutputType type) -> py::array
              {
             auto *deviceBuffers = sim.getDeviceOutputBuffers();
             if (!deviceBuffers)
             {
-                throw std::runtime_error("Output buffers not initialized. Call run() first.");
+                throw std::runtime_error("There are no output buffers yet; call Simulation.run() first");
             }
 
             auto rayOutput = sim.getRayOutput();
             if (!rayOutput)
             {
-                throw std::runtime_error("Outputs not configured. Call configure_outputs() first.");
+                throw std::runtime_error("Simulation.outputs is not set");
             }
 
             const auto &descriptor = rayOutput->getDescriptor(type);
-            const BufferLayout &layout = deviceBuffers->getBufferLayout(type);
-            if (!layout.devicePtr)
+            if (!deviceBuffers->getBuffer<void>(type))
             {
-                throw std::runtime_error("Output buffer for the specified type is not available.");
+                throw std::runtime_error(py::str(py::cast(type)).cast<std::string>() +
+                                         " was not in Simulation.outputs for the last run()");
             }
+            const BufferLayout &layout = deviceBuffers->getBufferLayout(type);
 
             const uint3 shape = layout.shape;
-            const size_t elementCount = static_cast<size_t>(shape.x) * shape.y * shape.z;
-            const size_t totalBytes = elementCount * descriptor.elementSize;
 
             auto baseDimensions = [&]() -> std::vector<py::ssize_t>
             {
@@ -647,16 +768,14 @@ PYBIND11_MODULE(photontracer_bindings, m)
 
             auto copyFromDevice = [&](void *hostPtr)
             {
-                if (totalBytes == 0)
+                try
                 {
-                    return;
+                    deviceBuffers->copyToHost(type, hostPtr);
                 }
-                const cudaError_t err = cudaMemcpy(hostPtr, layout.devicePtr, totalBytes, cudaMemcpyDeviceToHost);
-                if (err != cudaSuccess)
+                catch (const std::exception &e)
                 {
-                    const std::string errorMsg = std::string("Failed to copy output buffer '") + descriptor.name +
-                                                 "' from device memory: " + cudaGetErrorString(err);
-                    throw std::runtime_error(errorMsg);
+                    throw std::runtime_error(std::string("Failed to copy output buffer '") + descriptor.name +
+                                             "' from device memory: " + e.what());
                 }
             };
 
@@ -698,38 +817,68 @@ PYBIND11_MODULE(photontracer_bindings, m)
                 copyFromDevice(result.mutable_data());
                 return result;
             }
-            case BufferDescriptor::ElementType::String:
-            {
-                py::array_t<char> result(shapeFor(static_cast<py::ssize_t>(LOG_BYTES_PER_RAY)));
-                copyFromDevice(result.mutable_data());
-                return result;
-            }
             default:
                 throw std::runtime_error("Unsupported buffer element type.");
-            } }, py::arg("output_type"), "Get the specified output buffer as a numpy array")
+            } }, py::arg("output_type"), doc::Simulation_get_output_buffer)
 
-        .def_property("geometry", &Simulation::getGeometry, &Simulation::setGeometry, "Get or set the geometry for the simulation.")
-        .def_property("materials", &Simulation::getMaterials, &Simulation::setMaterials, "Get or set the materials for the simulation.")
-        .def_property("wavelength_um", &Simulation::getWavelengthUm, &Simulation::setWavelengthUm, "Get or set the wavelength in micrometers for the simulation.")
-        .def_property("length_unit", &Simulation::getLengthUnit, &Simulation::setLengthUnit, "Get or set the geometry length unit for the simulation.")
-        .def_property("stokes_vector", [](const Simulation &sim)
-                      { return toPyObject(sim.getStokesVector()); }, [](Simulation &sim, py::object vec)
-                      { sim.setStokesVector(toFloat4(vec, "stokes_vector")); }, "Get or set the initial Stokes vector for polarization.")
-        .def_property("q_minus_axis_seed", [](const Simulation &sim)
-                      { return toPyObject(sim.getQMinusAxisSeed()); }, [](Simulation &sim, py::object vec)
-                      { sim.setQMinusAxisSeed(toFloat3(vec, "q_minus_axis_seed")); }, "Get or set the Q- axis for the source ray.")
-        .def_property("max_scattering_count", &Simulation::getMaxScatteringCount, &Simulation::setMaxScatteringCount, "Get or set the maximum scattering count for ray tracing. If 0, there is no limit.")
-        .def_property("max_nested_geometry_levels", &Simulation::getMaxNestedGeometryLevels, &Simulation::setMaxNestedGeometryLevels, "Get or set the maximum nested geometry levels for ray tracing.")
-        .def_property_readonly("max_sub_geometries", &Simulation::getMaxSubGeometries, "Get the maximum number of sub-geometries allowed in an InstanceGeometry.")
-        .def_property_readonly("max_mesh_triangles", &Simulation::getMaxMeshTriangles, "Get the maximum number of triangles allowed in a MeshGeometry.")
-        .def_property("seed", &Simulation::getInitSeed, &Simulation::setInitSeed, "Get or set the initial seed for random number generation.")
-        .def_property("use_complex_fresnel", &Simulation::getUseComplexFresnel, &Simulation::setUseComplexFresnel, "Get or set whether to use complex Fresnel equations for refractive materials.")
-        .def_property("direction_healpix_nside", &Simulation::getDirectionHealpixNside, &Simulation::setDirectionHealpixNside, "Set NSIDE for aggregating miss directions into Healpix bins (0 disables the histogram).")
-        .def_property("ray_generator", &Simulation::getRayGenerator, &Simulation::setRayGenerator, "Get or set the ray generator for the simulation.")
+        .def_property("trace_rays", &Simulation::getTraceRays, &Simulation::setTraceRays, doc::Simulation_trace_rays)
+        .def_property("max_trace_steps", &Simulation::getMaxTraceSteps, &Simulation::setMaxTraceSteps,
+                      "Steps recorded per traced ray (default 1000); later steps are not stored.")
+        .def("get_trace", [](Simulation &sim) -> py::array
+             {
+            const std::vector<TraceRecord> steps = sim.getTrace();
+            py::list fields;
+            fields.append(py::make_tuple("ray", "<u4"));
+            fields.append(py::make_tuple("step", "<u4"));
+            fields.append(py::make_tuple("event", "<u4"));
+            fields.append(py::make_tuple("medium_in", "<u4"));
+            fields.append(py::make_tuple("medium_out", "<u4"));
+            fields.append(py::make_tuple("origin_in", "<f4", 3));
+            fields.append(py::make_tuple("direction_in", "<f4", 3));
+            fields.append(py::make_tuple("origin_out", "<f4", 3));
+            fields.append(py::make_tuple("direction_out", "<f4", 3));
+            fields.append(py::make_tuple("stokes", "<f4", 4));
+            fields.append(py::make_tuple("optical_path_length", "<f4"));
+            py::dtype dtype = py::dtype::from_args(fields);
+            if (static_cast<size_t>(dtype.itemsize()) != sizeof(TraceRecord))
+            {
+                throw std::runtime_error("The trace record layout does not match its numpy type");
+            }
+            py::array result(dtype, static_cast<py::ssize_t>(steps.size()));
+            if (!steps.empty())
+            {
+                std::memcpy(result.mutable_data(), steps.data(), steps.size() * sizeof(TraceRecord));
+            }
+            return result; },
+             doc::Simulation_get_trace)
+        .def_property("geometry", &Simulation::getGeometry, &Simulation::setGeometry, doc::Simulation_geometry)
+        .def_property("materials", &Simulation::getMaterials, &Simulation::setMaterials, doc::Simulation_materials)
+        .def_property("wavelength_um", &Simulation::getWavelengthUm, &Simulation::setWavelengthUm, doc::Simulation_wavelength_um)
+        .def_property("length_unit", &Simulation::getLengthUnit, &Simulation::setLengthUnit,
+                      "Unit of the geometry coordinates, default MICRO_METER.")
+        .def_property("stokes_vector", &Simulation::getStokesVector, &Simulation::setStokesVector, doc::Simulation_stokes_vector)
+        .def_property("q_minus_axis_seed", &Simulation::getQMinusAxisSeed, &Simulation::setQMinusAxisSeed, doc::Simulation_q_minus_axis_seed)
+        .def_property("max_scattering_count", &Simulation::getMaxScatteringCount, &Simulation::setMaxScatteringCount,
+                      doc::Simulation_max_scattering_count)
+        .def_property("max_nested_geometry_levels", &Simulation::getMaxNestedGeometryLevels, &Simulation::setMaxNestedGeometryLevels,
+                      doc::Simulation_max_nested_geometry_levels)
+        .def_property_readonly("max_sub_geometries", &Simulation::getMaxSubGeometries,
+                               "Maximum number of sub-geometries of an InstanceGeometry on this backend.")
+        .def_property_readonly("max_mesh_triangles", &Simulation::getMaxMeshTriangles,
+                               "Maximum number of triangles of a MeshGeometry on this backend.")
+        .def_property("seed", &Simulation::getInitSeed, &Simulation::setInitSeed, doc::Simulation_seed)
+        .def_property("random_number_generator", &Simulation::getRandomNumberGenerator, &Simulation::setRandomNumberGenerator,
+                      doc::Simulation_random_number_generator)
+        .def_property("use_complex_fresnel", &Simulation::getUseComplexFresnel, &Simulation::setUseComplexFresnel,
+                      doc::Simulation_use_complex_fresnel)
+        .def_property("direction_healpix_nside", &Simulation::getDirectionHealpixNside, &Simulation::setDirectionHealpixNside,
+                      doc::Simulation_direction_healpix_nside)
+        .def_property("ray_generator", &Simulation::getRayGenerator, &Simulation::setRayGenerator,
+                      "The source of the rays: a ParallelRayGenerator, IsotropicRayGenerator, DiffuseRayGenerator or CameraRayGenerator.")
         .def_property("outputs", [](const Simulation &sim) -> std::vector<OutputType>
                       {
             if (!sim.getRayOutput()) {
-                throw std::runtime_error("Outputs not configured. Call configure_outputs() first.");
+                throw std::runtime_error("Simulation.outputs is not set");
             }
 
             const auto &descriptors = sim.getRayOutput()->getDescriptors();
@@ -748,12 +897,11 @@ PYBIND11_MODULE(photontracer_bindings, m)
                           }
                           sim.setRayOutput(rayTracingOutput); // Set the configured output buffers in the simulation
                       },
-                      "Get or set the list of output types for the simulation.");
+                      doc::Simulation_outputs);
 
-    // Module-level function to check CUDA availability
-    m.def("is_cuda_available", []() -> bool
-          {
-        int deviceCount = 0;
-        cudaError_t err = cudaGetDeviceCount(&deviceCount);
-        return err == cudaSuccess && deviceCount > 0; }, "Check if CUDA is available and properly initialized. Returns True if CUDA device(s) are detected.");
+    m.def("is_cuda_available", &isCudaAvailable, "Whether at least one CUDA device is available.");
+    m.def("set_verbose", [](bool verbose) { verboseOutput() = verbose; },
+          py::arg("verbose"), "Print progress messages (device in use, compile and launch times). Off by default.");
+    m.def("is_verbose", []() { return verboseOutput().load(); }, "Whether progress messages are printed.");
+    m.def("available_backends", &availableBackends, "The raytracing backends of this build, the default one first.");
 }

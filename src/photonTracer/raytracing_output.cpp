@@ -1,13 +1,10 @@
 // This source code is licensed under the BSD-3 license found in the LICENSE file in the root directory of this source tree.
 // © 2024-2026, University of Bern, Space Research and Planetary Sciences, Physics Institute, Rafael Ottersberg
 
-#include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 
-#include <OptiXToolkit/Error/cudaErrorCheck.h>
-#include <OptiXToolkit/Error/optixErrorCheck.h>
 
 #include "photontracer.h"
 #include "raytracing_output.h"
@@ -30,9 +27,8 @@ RayTracingOutput::RayTracingOutput()
         {OutputType::SOURCE_POSITION, "sourcePosition", sizeof(float3), BufferDescriptor::ElementType::Float3, false},
         {OutputType::SCATTERING_ANGLE, "scatteringAngle", sizeof(float), BufferDescriptor::ElementType::Float, false},
         {OutputType::Q_MINUS_AXIS_IN, "qMinusAxisIn", sizeof(float3), BufferDescriptor::ElementType::Float3, false},
-        {OutputType::LOGS, "logs", LOG_BYTES_PER_RAY * sizeof(char), BufferDescriptor::ElementType::String, false},
-        {OutputType::LOG_OFFSETS, "logOffsets", sizeof(uint32_t), BufferDescriptor::ElementType::UInt32, false, 0, true},
         {OutputType::DIRECTION_HISTOGRAM_HEALPIX, "directionHistogramHealpix", sizeof(uint32_t), BufferDescriptor::ElementType::UInt32, false, 0, true},
+        {OutputType::FIRST_POSITION, "firstPosition", sizeof(float3), BufferDescriptor::ElementType::Float3, false},
     };
 
     const auto expectedSize = static_cast<size_t>(OutputType::OUTPUT_TYPE_COUNT);

@@ -4,14 +4,16 @@
 #include <optix.h>
 #include "photontracer.h"
 
-class RayTracingPipeline
+class OptixRayTracingPipeline
 {
 public:
-    RayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm, uint32_t maxTraversableGraphDepth = 1)
+    OptixRayTracingPipeline(const OptixDeviceContext context, std::vector<Material> materials, const float wavelengthUm,
+                            uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator)
+        : generator_(generator)
     {
         initialize(context, materials, wavelengthUm, maxTraversableGraphDepth);
     }
-    ~RayTracingPipeline();
+    ~OptixRayTracingPipeline();
 
     void updateShaderBindingTable(const std::vector<Material> materials, const float wavelengthUm);
 
@@ -25,13 +27,16 @@ private:
     OptixModule module_ = nullptr;
 
     OptixProgramGroup raygenProgGroup_ = nullptr;
+    OptixProgramGroup tracedRaygenProgGroup_ = nullptr; ///< the same raygen program with the recording of traced rays
     OptixProgramGroup missProgGroup_ = nullptr;
     OptixProgramGroup hitgroupProgGroup_ = nullptr;
 
     CUdeviceptr raygenRecord_ = 0;
+    CUdeviceptr tracedRaygenRecord_ = 0;
     CUdeviceptr missRecord_ = 0;
     CUdeviceptr hitgroupRecord_ = 0;
 
+    RandomNumberGenerator generator_; ///< selects the kernel module
     uint32_t maxTraversableGraphDepth_ = 1;
     const uint32_t maxTraceDepth_ = 1; // no recursion, we use iterative path tracing
 
@@ -49,14 +54,15 @@ private:
     void cleanupShaderBindingTable();
 };
 
-class VolumeFractionPipeline
+class OptixVolumeFractionPipeline
 {
 public:
-    VolumeFractionPipeline(const OptixDeviceContext context, uint32_t maxTraversableGraphDepth = 1)
+    OptixVolumeFractionPipeline(const OptixDeviceContext context, uint32_t maxTraversableGraphDepth, RandomNumberGenerator generator)
+        : generator_(generator)
     {
         initialize(context, maxTraversableGraphDepth);
     }
-    ~VolumeFractionPipeline();
+    ~OptixVolumeFractionPipeline();
 
     void launch(InputParametersSampleDensity &params);
 
@@ -75,6 +81,7 @@ private:
     CUdeviceptr missRecord_ = 0;
     CUdeviceptr hitgroupRecord_ = 0;
 
+    RandomNumberGenerator generator_; ///< selects the kernel module
     uint32_t maxTraversableGraphDepth_ = 1;
     const uint32_t maxTraceDepth_ = 1; // no recursion, we use iterative path tracing
 

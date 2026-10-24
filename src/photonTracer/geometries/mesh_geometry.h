@@ -6,9 +6,6 @@
 #include <vector>
 #include <string>
 
-#include <optix.h>
-#include <cuda_runtime.h>
-
 #include "../photontracer.h"
 #include "../i_geometry.h"
 
@@ -23,16 +20,9 @@ public:
      *
      * @param vertices List of vertex positions.
      * @param indices List of triangle indices.
+     * @param compact Compact the acceleration structure to save device memory.
      */
-    MeshGeometry(std::vector<float3> vertices, std::vector<unsigned int> indices);
-
-    /**
-     * @brief Build the OptiX acceleration structure for the mesh.
-     *
-     * @param context The OptiX device context.
-     * @return BuildResult containing the traversable handle and output buffer.
-     */
-    void build(OptixDeviceContext &context) override;
+    MeshGeometry(std::vector<float3> vertices, std::vector<unsigned int> indices, bool compact = true);
 
     /**
      * @brief Get the type name of this geometry.
@@ -41,7 +31,14 @@ public:
      */
     GeometryType getType() const override;
 
+    void validateMaterialIds(std::size_t materialCount) const override;
+
+    const std::vector<float3> &getVertices() const { return vertices; }
+    const std::vector<unsigned int> &getIndices() const { return indices; }
+    bool isCompact() const { return compact; }
+
 private:
     std::vector<float3> vertices;      ///< Vertex positions of the mesh
     std::vector<unsigned int> indices; ///< Indices defining the mesh triangle faces
+    bool compact;                      ///< Whether the acceleration structure is compacted after the build
 };

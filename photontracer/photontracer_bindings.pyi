@@ -1,11 +1,13 @@
-"""Python bindings for the PhotonTracer GPU ray tracing simulation.
+"""
+Python bindings for the PhotonTracer ray tracing simulation.
 
-PhotonTracer uses NVIDIA OptiX to trace rays through 3D scenes and compute
-light scattering / transport quantities. The typical workflow is:
+PhotonTracer traces rays through 3D scenes, on the GPU with NVIDIA OptiX or on
+the CPU with Embree, and computes light scattering and transport quantities.
+The typical workflow is:
 
 1. Build a geometry (:class:`MeshGeometry` or :class:`InstanceGeometry`).
-2. Define a list of :class:`Material` objects describing how surfaces interact
-   with light.
+2. Define a list of :class:`Material` objects describing how surfaces and
+   volumes interact with light.
 3. Choose a :class:`IRayGenerator` subclass that determines how source rays
    are spawned.
 4. Create a :class:`Simulation`, assign the geometry, materials, ray generator
@@ -23,9 +25,9 @@ Example::
     vertices = np.array([...], dtype=np.float32)   # shape (N, 3)
     faces    = np.array([...], dtype=np.uint32)     # shape (M, 3)
 
-    sim = Simulation(gpu_id=0)
+    sim = Simulation()
     sim.geometry      = MeshGeometry(vertices, faces)
-    sim.materials     = [Material(REFRACTIVE, 1.33+0j)]
+    sim.materials     = [Material(REFRACTIVE, 1+0j), Material(REFRACTIVE, 1.33+0j)]
     sim.wavelength_um = 0.532
     sim.ray_generator = ParallelRayGenerator(
         number_of_rays=10_000,
@@ -39,734 +41,826 @@ Example::
     counts = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
 """
 from __future__ import annotations
-
-import typing
-
+import collections.abc
 import numpy
-from numpy.typing import NDArray
-
-
-__all__ = [
-    "GeometryType",
-    "MESH",
-    "MESH_INSTANCED",
-    "LengthUnit",
-    "MICRO_METER",
-    "MILLI_METER",
-    "METER",
-    "MaterialType",
-    "DIFFUSE",
-    "REFRACTIVE",
-    "REFLECTIVE",
-    "VOLUME_SCATTERING",
-    "OutputType",
-    "LAST_DIRECTION",
-    "LAST_POSITION",
-    "RAY_STATE",
-    "LAST_MEDIUM_ID",
-    "SCATTERING_COUNT",
-    "NUMBER_OF_WARNINGS",
-    "STOKES_VECTOR",
-    "STOKES_VECTOR_IN",
-    "OPTICAL_PATH_LENGTH",
-    "SOURCE_DIRECTION",
-    "SOURCE_POSITION",
-    "SCATTERING_ANGLE",
-    "Q_MINUS_AXIS_IN",
-    "LOGS",
-    "LOG_OFFSETS",
-    "DIRECTION_HISTOGRAM_HEALPIX",
-    "RefractiveIndex",
-    "Diffuse",
-    "Refractive",
-    "Reflective",
-    "VolumeScattering",
-    "MaterialProperties",
-    "Material",
-    "IGeometry",
-    "MeshGeometry",
-    "InstanceGeometry",
-    "IRayGenerator",
-    "ParallelRayGenerator",
-    "IsotropicRayGenerator",
-    "CameraRayGenerator",
-    "Simulation",
-    "is_cuda_available",
-]
-
-
-Vector3 = typing.Union[
-    NDArray[numpy.floating],
-    NDArray[numpy.integer],
-    tuple[float, float, float],
-    tuple[int, int, int],
-    list[float],
-    list[int],
-]
-"""A 3-element vector accepted by ray generators and simulation properties.
-
-Can be a NumPy array of shape ``(3,)`` (any numeric dtype — cast to float32
-internally), a 3-tuple, or a 3-element list of numbers.
-"""
-
-
+import numpy.typing
+import photontracer._typing
+import typing
+__all__: list[str] = ['Backend', 'CameraRayGenerator', 'DIFFUSE', 'DIRECTION_HISTOGRAM_HEALPIX', 'Diffuse', 'DiffuseRayGenerator', 'EMBREE', 'FIRST_POSITION', 'GeometryType', 'IGeometry', 'IRayGenerator', 'InstanceGeometry', 'IsotropicRayGenerator', 'LAST_DIRECTION', 'LAST_MEDIUM_ID', 'LAST_POSITION', 'LengthUnit', 'MESH', 'MESH_INSTANCED', 'METER', 'MICRO_METER', 'MILLI_METER', 'MRG32K3A', 'Material', 'MaterialProperties', 'MaterialType', 'MeshGeometry', 'NUMBER_OF_WARNINGS', 'OPTICAL_PATH_LENGTH', 'OPTIX', 'OutputType', 'PCG32', 'ParallelRayGenerator', 'Q_MINUS_AXIS_IN', 'RAY_STATE', 'REFLECTIVE', 'REFRACTIVE', 'RandomNumberGenerator', 'Reflective', 'Refractive', 'RefractiveIndex', 'SCATTERING_ANGLE', 'SCATTERING_COUNT', 'SOURCE_DIRECTION', 'SOURCE_POSITION', 'STOKES_VECTOR', 'STOKES_VECTOR_IN', 'Simulation', 'TraceEvent', 'VOLUME_SCATTERING', 'VolumeScattering', 'available_backends', 'is_cuda_available', 'is_verbose', 'set_verbose']
 class GeometryType:
-    """Enum identifying the type of a geometry object.
-
-    Members:
-
-    * ``MESH`` – a single triangle mesh (:class:`MeshGeometry`).
-    * ``MESH_INSTANCED`` – multiple mesh instances placed via transform matrices
-      (:class:`InstanceGeometry`).
     """
-
-    MESH: GeometryType
-    MESH_INSTANCED: GeometryType
-    __members__: dict[str, GeometryType]
-
-    def __eq__(self, other: typing.Any) -> bool: ...
-
-    def __hash__(self) -> int: ...
-
-    def __init__(self, value: int) -> None: ...
-
-    def __int__(self) -> int: ...
-
-    def __repr__(self) -> str: ...
-
+    Type of a geometry, returned by IGeometry.get_type().
+    
+    Members:
+    
+      MESH : A single triangle mesh (MeshGeometry).
+    
+      MESH_INSTANCED : Instances of geometries placed by transforms (InstanceGeometry).
+    """
+    MESH: typing.ClassVar[GeometryType]
+    MESH_INSTANCED: typing.ClassVar[GeometryType]
+    __members__: typing.ClassVar[dict[str, GeometryType]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
     @property
-    def name(self) -> str: ...
-
+    def name(self) -> str:
+        ...
     @property
-    def value(self) -> int: ...
-
-
+    def value(self) -> int:
+        ...
+class RandomNumberGenerator:
+    """
+    Random number generator of the ray tracing kernels.
+    
+    Assign one of these to :attr:`Simulation.random_number_generator`. Both give
+    the same results statistically, but not ray by ray.
+    
+    
+    Members:
+    
+      PCG32 : PCG32, the default. Cheap to seed, which matters most for scenes with little physics per ray.
+    
+      MRG32K3A : curand's MRG32k3a, the generator of the 1.0 releases. OptiX only.
+    """
+    MRG32K3A: typing.ClassVar[RandomNumberGenerator]
+    PCG32: typing.ClassVar[RandomNumberGenerator]
+    __members__: typing.ClassVar[dict[str, RandomNumberGenerator]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class Backend:
+    """
+    Where a Simulation traces its rays; pass one as backend to Simulation.
+    
+    Members:
+    
+      OPTIX : NVIDIA GPU with OptiX.
+    
+      EMBREE : CPU with Embree and TBB. Supports only the PCG32 generator.
+    """
+    EMBREE: typing.ClassVar[Backend]
+    OPTIX: typing.ClassVar[Backend]
+    __members__: typing.ClassVar[dict[str, Backend]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class TraceEvent:
+    """
+    What happened to a traced ray in one step (event field of Simulation.get_trace()).
+    
+    Members:
+    
+      INTERACTION : Reflected, refracted or scattered; the ray goes on.
+    
+      ESCAPED : The ray left the scene.
+    
+      ABSORBED : The ray was absorbed.
+    
+      MAX_SCATTERING : The ray reached Simulation.max_scattering_count.
+    
+      ERROR : The ray ended on an error.
+    """
+    ABSORBED: typing.ClassVar[TraceEvent]
+    ERROR: typing.ClassVar[TraceEvent]
+    ESCAPED: typing.ClassVar[TraceEvent]
+    INTERACTION: typing.ClassVar[TraceEvent]
+    MAX_SCATTERING: typing.ClassVar[TraceEvent]
+    __members__: typing.ClassVar[dict[str, TraceEvent]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
 class LengthUnit:
-    """Enum specifying the physical unit used by geometry coordinates.
-
-    The simulation converts the geometry's unit to micrometres internally
-    so that :attr:`Simulation.wavelength_um` is always expressed in μm.
-
-    Members:
-
-    * ``MICRO_METER`` – coordinates are in micrometres (μm).
-    * ``MILLI_METER`` – coordinates are in millimetres (mm).
-    * ``METER`` – coordinates are in metres (m).
     """
-
-    MICRO_METER: LengthUnit
-    MILLI_METER: LengthUnit
-    METER: LengthUnit
-    __members__: dict[str, LengthUnit]
-
-    def __eq__(self, other: typing.Any) -> bool: ...
-
-    def __hash__(self) -> int: ...
-
-    def __init__(self, value: int) -> None: ...
-
-    def __int__(self) -> int: ...
-
-    def __repr__(self) -> str: ...
-
+    Physical unit of the geometry coordinates.
+    
+    Assign one of these to :attr:`Simulation.length_unit`. Positions, distances
+    and the optical path length are in this unit; it is needed to convert the
+    imaginary part of a refractive index, given for :attr:`Simulation.wavelength_um`
+    in μm, into an absorption coefficient per geometry unit.
+    
+    
+    Members:
+    
+      MICRO_METER : Micrometres (μm).
+    
+      MILLI_METER : Millimetres (mm).
+    
+      METER : Metres (m).
+    """
+    METER: typing.ClassVar[LengthUnit]
+    MICRO_METER: typing.ClassVar[LengthUnit]
+    MILLI_METER: typing.ClassVar[LengthUnit]
+    __members__: typing.ClassVar[dict[str, LengthUnit]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
     @property
-    def name(self) -> str: ...
-
+    def name(self) -> str:
+        ...
     @property
-    def value(self) -> int: ...
-
-
+    def value(self) -> int:
+        ...
 class MaterialType:
-    """Enum specifying how a surface interacts with incident rays.
-
-    Pass one of these values as the first argument to :class:`Material`.
-
-    Members:
-
-    * ``DIFFUSE`` – Lambertian diffuse reflection. Requires an ``albedo``
-      parameter in ``[0, 1]``.
-    * ``REFRACTIVE`` – Dielectric refraction and Fresnel reflection described by
-      a complex refractive index *n + ik*. Requires a ``refractive_index``
-      parameter.
-    * ``REFLECTIVE`` – Specular (metallic) reflection with optional roughness.
-      Requires a ``reflectivity`` in ``[0, 1]`` and optionally a ``fuzziness``
-      in ``[0, 1)``.
-    * ``VOLUME_SCATTERING`` – Participating medium described by a complex
-      refractive index, a scattering coefficient, and a Henyey–Greenstein
-      asymmetry parameter *g*.
     """
-
-    DIFFUSE: MaterialType
-    REFRACTIVE: MaterialType
-    REFLECTIVE: MaterialType
-    VOLUME_SCATTERING: MaterialType
-    __members__: dict[str, MaterialType]
-
-    def __eq__(self, other: typing.Any) -> bool: ...
-
-    def __hash__(self) -> int: ...
-
-    def __init__(self, value: int) -> None: ...
-
-    def __int__(self) -> int: ...
-
-    def __repr__(self) -> str: ...
-
+    How a surface or volume interacts with rays.
+    
+    Pass one of these as the first argument to :class:`Material`.
+    
+    
+    Members:
+    
+      DIFFUSE : Lambertian reflection with an albedo in [0, 1]; the rest is absorbed.
+    
+      REFRACTIVE : Fresnel reflection and refraction at the surface of a medium with a complex refractive index n + ik.
+    
+      REFLECTIVE : Specular (metallic) reflection with a reflectivity in [0, 1] and an optional fuzziness in [0, 1).
+    
+      VOLUME_SCATTERING : A participating medium with a complex refractive index, a scattering coefficient and a Henyey-Greenstein asymmetry parameter g.
+    """
+    DIFFUSE: typing.ClassVar[MaterialType]
+    REFLECTIVE: typing.ClassVar[MaterialType]
+    REFRACTIVE: typing.ClassVar[MaterialType]
+    VOLUME_SCATTERING: typing.ClassVar[MaterialType]
+    __members__: typing.ClassVar[dict[str, MaterialType]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
     @property
-    def name(self) -> str: ...
-
+    def name(self) -> str:
+        ...
     @property
-    def value(self) -> int: ...
-
-
+    def value(self) -> int:
+        ...
 class OutputType:
-    """Enum selecting which per-ray quantity to store in an output buffer.
-
-    Assign a list of these values to :attr:`Simulation.outputs` before calling
-    :meth:`Simulation.run`, then read results with
-    :meth:`Simulation.get_output_buffer`.
-
+    """
+    Per-ray quantity stored in an output buffer.
+    
+    Assign a list of these to :attr:`Simulation.outputs` before calling
+    :meth:`Simulation.run`, then read the results with
+    :meth:`Simulation.get_output_buffer`. The dtype and shape of each buffer are
+    given below, where *N* stands for the ray dimensions (see
+    :meth:`Simulation.get_output_buffer`). Positions and lengths are in
+    geometry units (:attr:`Simulation.length_unit`).
+    
+    
     Members:
-
-    * ``LAST_DIRECTION`` – ``float32[N, 3]`` — unit direction vector at the
-      final scattering/absorption event for each ray.
-    * ``LAST_POSITION`` – ``float32[N, 3]`` — position at the final event.
-    * ``RAY_STATE`` – ``int32[N]`` — final state code (e.g. absorbed,
-      escaped).
-    * ``LAST_MEDIUM_ID`` – ``int32[N]`` — index into the materials list of the
-      medium the ray ended in.
-    * ``SCATTERING_COUNT`` – ``uint32[N]`` — total number of scattering events
-      experienced by each ray.
-    * ``NUMBER_OF_WARNINGS`` – ``uint32[N]`` — diagnostic warning count per
-      ray (e.g. exceeded max scattering count).
-    * ``STOKES_VECTOR`` – ``float32[N, 4]`` — final Stokes vector
-      *[I, Q, U, V]* for each ray.
-    * ``STOKES_VECTOR_IN`` – ``float32[N, 4]`` — Stokes vector
-      *[I, Q, U, V]* at the ray source.
-    * ``OPTICAL_PATH_LENGTH`` – ``float64[N]`` — total optical path length
-      (distance × refractive index) travelled by each ray.
-    * ``SOURCE_DIRECTION`` – ``float32[N, 3]`` — initial ray direction at the
-      source.
-    * ``SOURCE_POSITION`` – ``float32[N, 3]`` — initial ray position at the
-      source.
-    * ``SCATTERING_ANGLE`` – ``float32[N]`` — angle (radians) between the
-      source direction and the final direction.
-    * ``Q_MINUS_AXIS_IN`` – ``float32[N, 3]`` — the Q− reference axis used
-      for the source Stokes vector.
-    * ``LOGS`` – ``char[N, LOG_BYTES_PER_RAY]`` — raw per-ray debug log
-      strings (only available when debug logging is compiled in).
-    * ``LOG_OFFSETS`` – ``uint32[N]`` — byte offsets into the ``LOGS`` buffer
-      for each ray.
-    * ``DIRECTION_HISTOGRAM_HEALPIX`` – ``uint32[npix]`` — histogram counting
-      how many rays ended in each HEALPix pixel (requires
-      :attr:`Simulation.direction_healpix_nside` > 0).
+    
+      LAST_DIRECTION : float32 (N, 3): unit direction at the end of the ray: the direction it left the scene in, or the one it travelled in when it was absorbed.
+    
+      LAST_POSITION : float32 (N, 3): position of the last interaction: where the ray was absorbed, or where it last interacted before it left the scene. A ray without any interaction keeps its source position.
+    
+      RAY_STATE : int32 (N,): how the ray ended: 0 left the scene, 1 absorbed, 2 stopped at Simulation.max_scattering_count, 3 error.
+    
+      LAST_MEDIUM_ID : int32 (N,): index in Simulation.materials of the medium the ray was in at the end; 0 is the medium outside of all geometry.
+    
+      SCATTERING_COUNT : uint32 (N,): number of interactions the ray went on from (reflections, refractions and volume scatterings). The absorption or escape that ended the ray is not counted.
+    
+      NUMBER_OF_WARNINGS : uint32 (N,): number of inconsistencies in the tracking of the media the ray is in: overlapping geometry, media nested deeper than can be tracked, or leaving a medium the ray was not in. Non-zero values point to problems with the geometry.
+    
+      STOKES_VECTOR : float32 (N, 4): Stokes vector [I, Q, U, V] at the end, with Q referring to the scattering plane spanned by the source direction and the last direction. If the two are (anti-)parallel, the vector stays in the frame of the Q- axis the ray carried.
+    
+      STOKES_VECTOR_IN : float32 (N, 4): Stokes vector [I, Q, U, V] of the ray at the source, rotated into the same scattering plane as STOKES_VECTOR, so the two can be compared directly.
+    
+      OPTICAL_PATH_LENGTH : float64 (N,): optical path length of the whole ray: the sum of the distances times the real part of the refractive index of the medium they were travelled in.
+    
+      SOURCE_DIRECTION : float32 (N, 3): unit direction of the ray at the source.
+    
+      SOURCE_POSITION : float32 (N, 3): position of the ray at the source.
+    
+      SCATTERING_ANGLE : float32 (N,): angle between the source direction and the last direction, in radians in [0, pi].
+    
+      Q_MINUS_AXIS_IN : float32 (N, 3): unit Q- reference axis of the Stokes vector at the source, perpendicular to the source direction (see Simulation.q_minus_axis_seed).
+    
+      DIRECTION_HISTOGRAM_HEALPIX : uint32 (npix,): number of rays that left the scene in each direction, binned in HEALPix pixels in RING ordering, with npix = 12 * Simulation.direction_healpix_nside ** 2. A CameraRayGenerator gives one histogram per image pixel, (image_height, image_width, npix). Needs direction_healpix_nside > 0.
+    
+      FIRST_POSITION : float32 (N, 3): position of the first interaction, at a surface or in a volume; NaN for rays that left the scene without one.
     """
-
-    LAST_DIRECTION: OutputType
-    LAST_POSITION: OutputType
-    RAY_STATE: OutputType
-    LAST_MEDIUM_ID: OutputType
-    SCATTERING_COUNT: OutputType
-    NUMBER_OF_WARNINGS: OutputType
-    STOKES_VECTOR: OutputType
-    STOKES_VECTOR_IN: OutputType
-    OPTICAL_PATH_LENGTH: OutputType
-    SOURCE_DIRECTION: OutputType
-    SOURCE_POSITION: OutputType
-    SCATTERING_ANGLE: OutputType
-    Q_MINUS_AXIS_IN: OutputType
-    LOGS: OutputType
-    LOG_OFFSETS: OutputType
-    DIRECTION_HISTOGRAM_HEALPIX: OutputType
-    __members__: dict[str, OutputType]
-
-    def __eq__(self, other: typing.Any) -> bool: ...
-
-    def __hash__(self) -> int: ...
-
-    def __init__(self, value: int) -> None: ...
-
-    def __int__(self) -> int: ...
-
-    def __repr__(self) -> str: ...
-
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def value(self) -> int: ...
-
-
-class IGeometry:
-    """Abstract base class for all geometry types.
-
-    Do not instantiate directly; use one of the concrete subclasses:
-    :class:`MeshGeometry` or :class:`InstanceGeometry`.
-    """
-
-    def get_type(self) -> GeometryType:
-        """Return the geometry type enum value for this object."""
+    DIRECTION_HISTOGRAM_HEALPIX: typing.ClassVar[OutputType]
+    FIRST_POSITION: typing.ClassVar[OutputType]
+    LAST_DIRECTION: typing.ClassVar[OutputType]
+    LAST_MEDIUM_ID: typing.ClassVar[OutputType]
+    LAST_POSITION: typing.ClassVar[OutputType]
+    NUMBER_OF_WARNINGS: typing.ClassVar[OutputType]
+    OPTICAL_PATH_LENGTH: typing.ClassVar[OutputType]
+    Q_MINUS_AXIS_IN: typing.ClassVar[OutputType]
+    RAY_STATE: typing.ClassVar[OutputType]
+    SCATTERING_ANGLE: typing.ClassVar[OutputType]
+    SCATTERING_COUNT: typing.ClassVar[OutputType]
+    SOURCE_DIRECTION: typing.ClassVar[OutputType]
+    SOURCE_POSITION: typing.ClassVar[OutputType]
+    STOKES_VECTOR: typing.ClassVar[OutputType]
+    STOKES_VECTOR_IN: typing.ClassVar[OutputType]
+    __members__: typing.ClassVar[dict[str, OutputType]]
+    def __eq__(self, other: typing.Any) -> bool:
         ...
-
-    def free_device_memory(self) -> None:
-        """Release the OptiX acceleration structure buffers on the GPU.
-
-        Call this after the simulation is no longer needed to reclaim device
-        memory.  The geometry object becomes unusable afterwards.
-        """
+    def __getstate__(self) -> int:
         ...
-
-
-class MeshGeometry(IGeometry):
-    """A single closed or open triangle mesh.
-
-    Args:
-        vertices: Vertex positions.  Shape ``(V, 3)``, any floating-point dtype
-            (cast to ``float32`` internally).  ``float64`` arrays from trimesh
-            are accepted directly.
-        indices: Triangle index table.  Either shape ``(T, 3)`` or a flat
-            array of length ``3*T``, any integer dtype (cast to ``uint32``
-            internally).  Each row/triple gives the three vertex indices of
-            one triangle.
-
-    Example::
-
-        import numpy as np
-        from photontracer import MeshGeometry
-
-        verts = np.array([[-1,-1,0],[1,-1,0],[0,1,0]], dtype=np.float32)
-        faces = np.array([[0,1,2]], dtype=np.uint32)
-        geo = MeshGeometry(verts, faces)
-    """
-
-    def __init__(self, vertices: NDArray[numpy.floating],
-                 indices: NDArray[numpy.integer]) -> None: ...
-
-
-class InstanceGeometry(IGeometry):
-    """Multiple instances of one or more sub-geometries placed via transforms.
-
-    Use this geometry type to efficiently model scenes with many copies of a
-    small set of particle shapes (e.g. ice crystals of several habits at
-    arbitrary orientations).
-
-    Args:
-        sub_geometries: List of prototype geometries (e.g.
-            :class:`MeshGeometry` objects).  Each entry corresponds to one
-            particle type.
-        instance_transforms: Affine 3×4 row-major transform matrices for every
-            instance.  Shape ``(N, 3, 4)``, any floating-point dtype (cast to
-            ``float32`` internally).
-        particle_type_ids: Index into ``sub_geometries`` for each instance.
-            Shape ``(N,)``, any integer dtype (cast to ``uint32`` internally).
-        material_ids: Index into :attr:`Simulation.materials` for each
-            instance.  Shape ``(N,)``, any integer dtype (cast to ``uint32``
-            internally).
-
-    Example::
-
-        import numpy as np
-        from photontracer import MeshGeometry, InstanceGeometry
-
-        proto = MeshGeometry(vertices, faces)
-
-        # Identity transform for two instances
-        transforms = np.tile(np.eye(3, 4, dtype=np.float32), (2, 1, 1))
-        type_ids   = np.array([0, 0], dtype=np.uint32)
-        mat_ids    = np.array([0, 1], dtype=np.uint32)
-
-        geo = InstanceGeometry([proto], transforms, type_ids, mat_ids)
-    """
-
-    def __init__(
-        self,
-        sub_geometries: typing.Sequence[IGeometry],
-        instance_transforms: NDArray[numpy.floating],
-        particle_type_ids: NDArray[numpy.integer],
-        material_ids: NDArray[numpy.integer],
-    ) -> None: ...
-
-
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
 class RefractiveIndex:
-    """Complex refractive index *n + ik* stored as two ``float32`` fields.
-
-    The real part ``r`` is the phase refractive index *n* (≥ 1 for most
-    optical media).  The imaginary part ``i`` is the extinction coefficient
-    *k* (≥ 0; controls absorption).
-
-    Attributes:
-        r: Real part of the refractive index (*n*).
-        i: Imaginary part of the refractive index (*k*, extinction
-           coefficient).
-
-    The :attr:`complex` property provides a convenient ``complex`` view that
-    can be read and set using Python's native complex literals (e.g.
-    ``1.33+0j``).
-
+    """
+    Complex refractive index *n + ik*.
+    
+    The real part ``r`` is the refractive index *n*, the imaginary part ``i`` the
+    extinction coefficient *k* (≥ 0), which controls absorption.
+    
     Example::
-
+    
         ri = RefractiveIndex(1.31, 0.0)            # non-absorbing ice
         ri = RefractiveIndex(complex_value=1.5+0.01j)
         ri.complex = 1.33+0j
     """
-
-    r: float
-    i: float
-
     @typing.overload
     def __init__(self) -> None:
-        """Create a default RefractiveIndex with ``r=0`` and ``i=0``."""
-        ...
-
-    @typing.overload
-    def __init__(self, r: float, i: float) -> None:
-        """Create a RefractiveIndex from separate real and imaginary parts.
-
-        Args:
-            r: Real part (*n*).
-            i: Imaginary part (*k*).
         """
-        ...
-
-    @typing.overload
-    def __init__(self, complex_value: complex) -> None:
-        """Create a RefractiveIndex from a Python complex number.
-
-        Args:
-            complex_value: Complex refractive index, e.g. ``1.31+0j``.
+        Create a refractive index of 0.
         """
+    @typing.overload
+    def __init__(self, r: typing.SupportsFloat | typing.SupportsIndex, i: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create a refractive index r + i·j from its real and imaginary parts.
+        """
+    @typing.overload
+    def __init__(self, complex_value: typing.SupportsComplex | typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create a refractive index from a complex number, e.g. 1.31+0j.
+        """
+    def __repr__(self) -> str:
         ...
-
     @property
     def complex(self) -> complex:
-        """The refractive index as a Python ``complex`` number (*n + ik*)."""
-        ...
-
+        """
+        The refractive index as a complex number n + ik.
+        """
     @complex.setter
-    def complex(self, value: complex) -> None: ...
-
-    def __repr__(self) -> str: ...
-
-
+    def complex(self, arg1: typing.SupportsComplex | typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def i(self) -> float:
+        """
+        Imaginary part k of the refractive index, the extinction coefficient.
+        """
+    @i.setter
+    def i(self, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def r(self) -> float:
+        """
+        Real part n of the refractive index.
+        """
+    @r.setter
+    def r(self, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
 class Diffuse:
-    """Properties for a Lambertian (diffuse) surface.
-
-    Attributes:
-        albedo: Fraction of incident light diffusely reflected, in ``[0, 1]``.
-            ``0`` is perfectly black; ``1`` is a perfect Lambertian reflector.
     """
-
-    albedo: float
-
-    def __init__(self) -> None: ...
-
-    def __repr__(self) -> str: ...
-
-
+    Properties of a Lambertian (diffuse) surface.
+    """
+    def __init__(self) -> None:
+        ...
+    def __repr__(self) -> str:
+        ...
+    @property
+    def albedo(self) -> float:
+        """
+        Fraction of the light reflected diffusely, in [0, 1]; the rest is absorbed.
+        """
+    @albedo.setter
+    def albedo(self, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
 class Refractive:
-    """Properties for a dielectric (refractive) surface.
-
-    Fresnel reflection and transmission are computed from the complex
-    refractive index and the current medium's refractive index.
-
-    Attributes:
-        refractive_index: Complex refractive index *n + ik* of the material.
     """
-
-    refractive_index: RefractiveIndex
-
-    def __init__(self) -> None: ...
-
-    def __repr__(self) -> str: ...
-
-
+    Properties of a refractive medium: Fresnel reflection and refraction at its surface.
+    """
+    def __init__(self) -> None:
+        ...
+    def __repr__(self) -> str:
+        ...
+    @property
+    def refractive_index(self) -> RefractiveIndex:
+        """
+        Complex refractive index n + ik of the medium; k causes absorption inside it.
+        """
+    @refractive_index.setter
+    def refractive_index(self, arg0: RefractiveIndex) -> None:
+        ...
 class Reflective:
-    """Properties for a metallic (specular) surface with optional roughness.
-
-    Attributes:
-        reflectivity: Fraction of incident light that is specularly reflected,
-            in ``[0, 1]``.
-        fuzziness: Surface roughness parameter in ``[0, 1)``.  ``0`` produces
-            a perfect mirror; values approaching ``1`` scatter reflected rays
-            over nearly a hemisphere.
     """
-
-    reflectivity: float
-    fuzziness: float
-
-    def __init__(self) -> None: ...
-
-    def __repr__(self) -> str: ...
-
-
+    Properties of a metallic (specular) surface.
+    """
+    def __init__(self) -> None:
+        ...
+    def __repr__(self) -> str:
+        ...
+    @property
+    def fuzziness(self) -> float:
+        """
+        Roughness in [0, 1): 0 is a perfect mirror, values towards 1 spread the reflection over nearly a hemisphere.
+        """
+    @fuzziness.setter
+    def fuzziness(self, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def reflectivity(self) -> float:
+        """
+        Fraction of the light reflected, in [0, 1]; the rest is absorbed.
+        """
+    @reflectivity.setter
+    def reflectivity(self, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
 class VolumeScattering:
-    """Properties for a participating (volume scattering) medium.
-
-    Rays entering a surface with this material type travel through the medium
-    and scatter according to the Henyey–Greenstein phase function until they
-    are absorbed or escape.
-
-    Attributes:
-        refractive_index: Complex refractive index of the medium.  The
-            imaginary part *k* encodes absorption.
-        scattering_coefficient: Scattering coefficient in units of inverse
-            length (matching :attr:`Simulation.length_unit`).
-        asymetry_parameter: Henyey–Greenstein asymmetry parameter *g*,
-            in ``(-1, 1)``.  ``0`` is isotropic; ``>0`` forward-scattering;
-            ``<0`` back-scattering.
     """
-
-    refractive_index: RefractiveIndex
-    scattering_coefficient: float
-    asymetry_parameter: float
-
-    def __init__(self) -> None: ...
-
-    def __repr__(self) -> str: ...
-
-
+    Properties of a participating (volume scattering) medium.
+    
+    Rays in this medium are scattered with the Henyey–Greenstein phase function
+    or absorbed, at distances drawn from the extinction coefficient: the
+    scattering coefficient plus the absorption coefficient from the imaginary
+    part of the refractive index.
+    """
+    def __init__(self) -> None:
+        ...
+    def __repr__(self) -> str:
+        ...
+    @property
+    def asymetry_parameter(self) -> float:
+        """
+        Henyey-Greenstein asymmetry parameter g in (-1, 1): 0 isotropic, > 0 forward, < 0 backward scattering.
+        """
+    @asymetry_parameter.setter
+    def asymetry_parameter(self, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def refractive_index(self) -> RefractiveIndex:
+        """
+        Complex refractive index n + ik of the medium; k gives the absorption coefficient.
+        """
+    @refractive_index.setter
+    def refractive_index(self, arg0: RefractiveIndex) -> None:
+        ...
+    @property
+    def scattering_coefficient(self) -> float:
+        """
+        Scattering coefficient per geometry unit (Simulation.length_unit).
+        """
+    @scattering_coefficient.setter
+    def scattering_coefficient(self, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
 class MaterialProperties:
-    """Union of all material property sub-structs.
-
-    Only the sub-struct corresponding to the :attr:`Material.type` of the
-    owning :class:`Material` is meaningful at runtime.  The four properties
-    ``diffuse``, ``refractive``, ``reflective``, and ``volume_scattering``
-    share the same underlying GPU buffer.
-
-    Attributes:
-        diffuse: Diffuse properties (used when ``type == DIFFUSE``).
-        refractive: Refractive properties (used when ``type == REFRACTIVE``).
-        reflective: Reflective properties (used when ``type == REFLECTIVE``).
-        volume_scattering: Volume scattering properties
-            (used when ``type == VOLUME_SCATTERING``).
     """
-
-    diffuse: Diffuse
-    refractive: Refractive
-    reflective: Reflective
-    volume_scattering: VolumeScattering
-
-    def __init__(self) -> None: ...
-
-    def __repr__(self) -> str: ...
-
-
+    The parameters of a material, one set per :class:`MaterialType`.
+    
+    Only the set of the :attr:`Material.type` of the owning :class:`Material` is
+    meaningful; the four share the same memory.
+    """
+    def __init__(self) -> None:
+        ...
+    def __repr__(self) -> str:
+        ...
+    @property
+    def diffuse(self) -> Diffuse:
+        """
+        Properties of a DIFFUSE material.
+        """
+    @diffuse.setter
+    def diffuse(self, arg1: Diffuse) -> None:
+        ...
+    @property
+    def reflective(self) -> Reflective:
+        """
+        Properties of a REFLECTIVE material.
+        """
+    @reflective.setter
+    def reflective(self, arg1: Reflective) -> None:
+        ...
+    @property
+    def refractive(self) -> Refractive:
+        """
+        Properties of a REFRACTIVE material.
+        """
+    @refractive.setter
+    def refractive(self, arg1: Refractive) -> None:
+        ...
+    @property
+    def volume_scattering(self) -> VolumeScattering:
+        """
+        Properties of a VOLUME_SCATTERING material.
+        """
+    @volume_scattering.setter
+    def volume_scattering(self, arg1: VolumeScattering) -> None:
+        ...
 class Material:
-    """Describes how a surface or volume interacts with traced rays.
-
-    A material combines a :class:`MaterialType` with the parameters relevant
-    to that type.  Use one of the convenience constructors below rather than
-    manually populating :attr:`properties`.
-
-    Attributes:
-        type: The interaction model (:class:`MaterialType`).
-        properties: Raw union of all property sub-structs
-            (:class:`MaterialProperties`).
-
-    Constructors:
-
-    * ``Material()`` – default (uninitialized) material.
-    * ``Material(DIFFUSE, albedo)`` – Lambertian reflector with the given
-      albedo in ``[0, 1]``.
-    * ``Material(REFLECTIVE, reflectivity)`` – perfect mirror with zero
-      fuzziness.
-    * ``Material(REFLECTIVE, reflectivity, fuzziness)`` – fuzzy mirror.
-    * ``Material(REFRACTIVE, refractive_index)`` – dielectric surface; accepts
-      a :class:`RefractiveIndex`, a ``complex``, or a ``float`` for the
-      refractive index.
-    * ``Material(VOLUME_SCATTERING, refractive_index, scattering_coefficient, g)``
-      – participating medium.
-
+    """
+    How a surface or volume interacts with rays.
+    
+    A material combines a :class:`MaterialType` with the parameters of that type.
+    Use one of the constructors rather than filling :attr:`properties` by hand.
+    Material ``0`` of :attr:`Simulation.materials` is the medium outside of all
+    geometry.
+    
     Example::
-
+    
         from photontracer import Material, DIFFUSE, REFRACTIVE, VOLUME_SCATTERING
-
+    
         m_diffuse  = Material(DIFFUSE, albedo=0.9)
+        m_mirror   = Material(REFLECTIVE, 0.95)
         m_glass    = Material(REFRACTIVE, 1.5+0j)
         m_ice      = Material(REFRACTIVE, 1.31+1e-9j)
         m_cloud    = Material(VOLUME_SCATTERING, 1.33+0j,
                               scattering_coefficient=100.0, g=0.85)
     """
-
-    type: MaterialType
-    properties: MaterialProperties
-
     @typing.overload
-    def __init__(self) -> None: ...
-
-    @typing.overload
-    def __init__(self, type: MaterialType, albedo: float) -> None:
-        """Create a DIFFUSE material with the given albedo.
-
-        Args:
-            type: Must be ``DIFFUSE``.
-            albedo: Reflectance in ``[0, 1]``.
+    def __init__(self) -> None:
         """
-        ...
-
-    @typing.overload
-    def __init__(self, type: MaterialType, reflectivity: float,
-                 fuzziness: float) -> None:
-        """Create a REFLECTIVE material with reflectivity and fuzziness.
-
-        Args:
-            type: Must be ``REFLECTIVE``.
-            reflectivity: Fraction of specularly reflected light in ``[0, 1]``.
-            fuzziness: Surface roughness in ``[0, 1)``.
+        Create a material without parameters.
         """
-        ...
-
     @typing.overload
-    def __init__(self, type: MaterialType, reflectivity: float) -> None:
-        """Create a REFLECTIVE material with zero fuzziness (perfect mirror).
-
-        Args:
-            type: Must be ``REFLECTIVE``.
-            reflectivity: Fraction of specularly reflected light in ``[0, 1]``.
+    def __init__(self, type: MaterialType, value: typing.SupportsFloat | typing.SupportsIndex) -> None:
         """
-        ...
-
-    @typing.overload
-    def __init__(self, type: MaterialType,
-                 refractive_index: RefractiveIndex) -> None:
-        """Create a REFRACTIVE material from a RefractiveIndex object.
-
-        Args:
-            type: Must be ``REFRACTIVE``.
-            refractive_index: Complex refractive index.
+        Create a material from one number: the albedo of a DIFFUSE material, the reflectivity of a REFLECTIVE material (a perfect mirror) or the real refractive index of a REFRACTIVE material.
         """
-        ...
-
     @typing.overload
-    def __init__(self, type: MaterialType,
-                 refractive_index: complex) -> None:
-        """Create a REFRACTIVE material from a Python complex number.
-
-        Args:
-            type: Must be ``REFRACTIVE``.
-            refractive_index: Complex refractive index, e.g. ``1.5+0j``.
+    def __init__(self, type: MaterialType, refractive_index: typing.SupportsComplex | typing.SupportsFloat | typing.SupportsIndex) -> None:
         """
-        ...
-
+        Create a REFRACTIVE material from a complex refractive index, e.g. 1.5+0j.
+        """
     @typing.overload
-    def __init__(
-        self,
-        type: MaterialType,
-        refractive_index: complex,
-        scattering_coefficient: float,
-        asymetry_parameter: float,
-    ) -> None:
-        """Create a VOLUME_SCATTERING medium.
-
+    def __init__(self, type: MaterialType, refractive_index: typing.SupportsComplex | typing.SupportsFloat | typing.SupportsIndex, scattering_coefficient: typing.SupportsFloat | typing.SupportsIndex, g: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create a VOLUME_SCATTERING medium.
+        
         Args:
             type: Must be ``VOLUME_SCATTERING``.
             refractive_index: Complex refractive index of the medium.
-            scattering_coefficient: Scattering coefficient (inverse length
-                units matching :attr:`Simulation.length_unit`).
-            asymetry_parameter: Henyey–Greenstein *g* parameter in
-                ``(-1, 1)``.
+            scattering_coefficient: Scattering coefficient per geometry unit
+                (:attr:`Simulation.length_unit`).
+            g: Henyey–Greenstein asymmetry parameter in ``(-1, 1)``.
         """
+    @typing.overload
+    def __init__(self, type: MaterialType, albedo: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create a DIFFUSE material with an albedo in [0, 1].
+        """
+    @typing.overload
+    def __init__(self, type: MaterialType, reflectivity: typing.SupportsFloat | typing.SupportsIndex, fuzziness: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create a REFLECTIVE material with a reflectivity in [0, 1] and a fuzziness in [0, 1).
+        """
+    @typing.overload
+    def __init__(self, type: MaterialType, reflectivity: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create a REFLECTIVE material that is a perfect mirror (fuzziness 0).
+        """
+    @typing.overload
+    def __init__(self, type: MaterialType, refractive_index: RefractiveIndex) -> None:
+        """
+        Create a REFRACTIVE material from a RefractiveIndex.
+        """
+    def __repr__(self) -> str:
         ...
-
-    def __repr__(self) -> str: ...
-
-
-class IRayGenerator:
-    """Abstract base class for ray generators.
-
-    A ray generator determines the number, origin, and initial direction of
-    the photons traced by the simulation.  Use one of the concrete subclasses:
-
-    * :class:`ParallelRayGenerator` – collimated beam (plane wave).
-    * :class:`IsotropicRayGenerator` – rays emmitted uniformly from all directions outside of a sphere towards the scene.
-    * :class:`CameraRayGenerator` – pinhole camera model for rendering.
-
-    Assign a concrete instance to :attr:`Simulation.ray_generator` before
-    calling :meth:`Simulation.run`.
+    @property
+    def properties(self) -> MaterialProperties:
+        """
+        The parameters of the material; only those of its type are used.
+        """
+    @properties.setter
+    def properties(self, arg0: MaterialProperties) -> None:
+        ...
+    @property
+    def type(self) -> MaterialType:
+        """
+        How the material interacts with rays.
+        """
+    @type.setter
+    def type(self, arg0: MaterialType) -> None:
+        ...
+class IGeometry:
     """
-    pass
-
-
-class ParallelRayGenerator(IRayGenerator):
-    """A collimated (parallel) beam of rays — equivalent to a plane wave.
-
-    All rays originate from a disk of radius ``offset_radius`` centred at
-    ``origin`` and travel in the same ``direction``.  The direction vector is
-    normalised automatically.
-
-    Args:
-        number_of_rays: Total number of rays to launch.
-        origin: Centre of the source disk (:data:`Vector3`).
-        direction: Propagation direction (:data:`Vector3`); normalised
-            automatically.
-        offset_radius: Radius of the circular source disk in geometry units.
-            Pass ``0`` for a single-point source.
-
+    Base class of all geometries.
+    
+    Use one of the subclasses: :class:`MeshGeometry` or :class:`InstanceGeometry`.
+    """
+    def free_device_memory(self) -> None:
+        """
+        Free the acceleration structures of this geometry and its sub-geometries. The next Simulation.run() builds them again.
+        """
+    def get_type(self) -> GeometryType:
+        """
+        Return the type of the geometry.
+        """
+class MeshGeometry(IGeometry):
+    """
+    A single closed or open triangle mesh.
+    
+    A mesh has no material IDs of its own: the medium inside it is material
+    ``1`` and the medium outside material ``0``. Wrap meshes in an
+    :class:`InstanceGeometry` to give them other materials.
+    
     Example::
-
+    
+        import numpy as np
+        from photontracer import MeshGeometry
+    
+        verts = np.array([[-1,-1,0],[1,-1,0],[0,1,0]], dtype=np.float32)
+        faces = np.array([[0,1,2]], dtype=np.uint32)
+        geo = MeshGeometry(verts, faces)
+    """
+    def __init__(self, vertices: typing.Annotated[numpy.typing.ArrayLike, numpy.float32], indices: typing.Annotated[numpy.typing.ArrayLike, numpy.uint32], compact: bool = True) -> None:
+        """
+        Create a mesh from its vertices and triangles.
+        
+        Args:
+            vertices: Vertex positions of shape ``(V, 3)``, cast to ``float32``.
+            indices: Triangles as vertex indices, of shape ``(T, 3)`` or flat with
+                length ``3 * T``, cast to ``uint32``.
+            compact: Compact the acceleration structure after building it, which
+                saves memory at a small cost in build time.
+        """
+class InstanceGeometry(IGeometry):
+    """
+    Instances of one or more sub-geometries placed by transforms.
+    
+    Use this geometry type to model scenes with many copies of a small set of
+    particle shapes (e.g. ice crystals of several habits at arbitrary
+    orientations) efficiently. Instance geometries can be nested up to
+    :attr:`Simulation.max_nested_geometry_levels`.
+    
+    Example::
+    
+        import numpy as np
+        from photontracer import MeshGeometry, InstanceGeometry
+    
+        proto = MeshGeometry(vertices, faces)
+    
+        # Identity transform for two instances
+        transforms = np.tile(np.eye(3, 4, dtype=np.float32), (2, 1, 1))
+        type_ids   = np.array([0, 0], dtype=np.uint32)
+        mat_ids    = np.array([1, 2], dtype=np.uint32)
+    
+        geo = InstanceGeometry([proto], transforms, type_ids, mat_ids)
+    """
+    def __init__(self, sub_geometries: collections.abc.Sequence[IGeometry], instance_transforms: typing.Annotated[numpy.typing.ArrayLike, numpy.float32], particle_type_ids: typing.Annotated[numpy.typing.ArrayLike, numpy.uint32], material_ids: typing.Annotated[numpy.typing.ArrayLike, numpy.uint32]) -> None:
+        """
+        Create instances of sub-geometries.
+        
+        Args:
+            sub_geometries: Prototype geometries, one per particle type.
+            instance_transforms: Affine 3×4 row-major transforms of the instances,
+                of shape ``(N, 3, 4)``, cast to ``float32``.
+            particle_type_ids: Index in ``sub_geometries`` of each instance, of
+                shape ``(N,)``.
+            material_ids: Index in :attr:`Simulation.materials` of the medium inside
+                each instance, of shape ``(N,)``.
+        """
+class IRayGenerator:
+    """
+    Base class of the ray generators.
+    
+    A ray generator determines the number, origin, and initial direction of the
+    rays traced by the simulation. Use one of the subclasses:
+    
+    * :class:`ParallelRayGenerator` – collimated beam (plane wave).
+    * :class:`IsotropicRayGenerator` – rays from all directions, from outside of a
+      sphere towards the scene.
+    * :class:`DiffuseRayGenerator` – diffuse illumination of a surface:
+      cosine-weighted directions around an axis.
+    * :class:`CameraRayGenerator` – pinhole camera for rendering.
+    
+    Assign one to :attr:`Simulation.ray_generator` before calling
+    :meth:`Simulation.run`.
+    """
+class ParallelRayGenerator(IRayGenerator):
+    """
+    A collimated (parallel) beam of rays, equivalent to a plane wave.
+    
+    All rays start on a disk of radius ``offset_radius`` centred at ``origin``
+    and travel in the same ``direction``. The launch shape is
+    ``(number_of_rays,)``.
+    
+    By default the disk is perpendicular to the beam, so its footprint on a
+    tilted surface is stretched by ``1 / cos(angle)``. With ``disk_normal`` the
+    disk can lie in another plane, e.g. parallel to the surface that is
+    illuminated: the rays then start in that plane and still travel along
+    ``direction``, and the footprint on the surface is a circle of the same radius
+    at every angle of incidence.
+    
+    Example::
+    
         from photontracer import ParallelRayGenerator
         import numpy as np
-
+    
         gen = ParallelRayGenerator(
             number_of_rays=100_000,
             origin=np.array([0, 0, -500], dtype=np.float32),
             direction=[0, 0, 1],
             offset_radius=50.0,
         )
+    
+        # beam at 60 degrees from the z axis, emitted from a disk parallel to the xy-plane
+        tilted = ParallelRayGenerator(
+            number_of_rays=100_000,
+            origin=[0, 0, -500],
+            direction=[np.sin(np.pi / 3), 0, np.cos(np.pi / 3)],
+            offset_radius=50.0,
+            disk_normal=[0, 0, 1],
+        )
     """
-
-    def __init__(
-        self,
-        number_of_rays: int,
-        origin: Vector3,
-        direction: Vector3,
-        offset_radius: float,
-    ) -> None: ...
-
+    def __init__(self, number_of_rays: typing.SupportsInt | typing.SupportsIndex, origin: photontracer._typing.Vector3, direction: photontracer._typing.Vector3, offset_radius: typing.SupportsFloat | typing.SupportsIndex, disk_normal: photontracer._typing.Vector3 | None = None) -> None:
+        """
+        Create a parallel beam.
+        
+        Args:
+            number_of_rays: Number of rays to launch.
+            origin: Centre of the source disk.
+            direction: Direction of the beam; normalised automatically.
+            offset_radius: Radius of the source disk in geometry units; ``0`` starts
+                all rays at ``origin``.
+            disk_normal: Normal of the plane of the source disk (normalised
+                automatically), or ``None`` for a disk perpendicular to
+                ``direction``. Must not be (nearly) perpendicular to ``direction``.
+        """
     @property
-    def origin(self) -> Vector3:
-        """Centre of the source disk."""
-        ...
-
-    @origin.setter
-    def origin(self, value: Vector3) -> None: ...
-
-    @property
-    def direction(self) -> Vector3:
-        """Unit propagation direction of the beam."""
-        ...
-
+    def direction(self) -> tuple[float, float, float]:
+        """
+        Unit direction of the beam; normalised when set.
+        """
     @direction.setter
-    def direction(self, value: Vector3) -> None: ...
-
+    def direction(self, arg1: photontracer._typing.Vector3) -> None:
+        ...
+    @property
+    def disk_normal(self) -> tuple[float, float, float]:
+        """
+        Unit normal of the plane of the source disk; equal to direction for a disk perpendicular to the beam. Setting None makes the disk perpendicular to the beam again.
+        """
+    @disk_normal.setter
+    def disk_normal(self, arg1: photontracer._typing.Vector3 | None) -> None:
+        ...
     @property
     def offset_radius(self) -> float:
-        """Radius of the circular source disk in geometry units."""
-        ...
-
+        """
+        Radius of the source disk in geometry units.
+        """
     @offset_radius.setter
-    def offset_radius(self, value: float) -> None: ...
-
-
+    def offset_radius(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def origin(self) -> tuple[float, float, float]:
+        """
+        Centre of the source disk.
+        """
+    @origin.setter
+    def origin(self, arg1: photontracer._typing.Vector3) -> None:
+        ...
 class IsotropicRayGenerator(IRayGenerator):
-    """An source that emits rays isotropically from outside of a sphere towards the scene.
-
-    Rays are spawned from randomly sampled points on a sphere of radius
-    ``source_radius`` around the ``center``, pointing toward the center.  
-    ``offset_radius`` can be used to add a tangential offset to the ray origins.  
-    The launch shape is ``(number_of_rays,)``, 
-    and output buffers will be 1-D arrays of length ``number_of_rays``.
-
-    Args:
-        number_of_rays: Total number of rays to launch.
-        center: Centre of the sphere (:data:`Vector3`).
-        source_radius: Radius of the spherical source from which rays are emitted towards the center.
-        offset_radius: Tangential offset radius in geometry units. Rays origins are offset in the tangential plane, 
-        within a sphere with radius ``offset_radius`` around the intersection point.  
-        Pass ``0`` so that rays are emmitted from the sphere surface and would intersect the center.
-
+    """
+    A source emitting rays isotropically from outside of a sphere towards the scene.
+    
+    Rays start at random points on a sphere of radius ``source_radius`` around
+    ``center`` and point towards the center. ``offset_radius`` shifts the ray
+    origins tangentially, so that the rays do not all meet in the center. The
+    launch shape is ``(number_of_rays,)``.
+    
     Example::
-
+    
         gen = IsotropicRayGenerator(
             number_of_rays=1_000_000,
             center=[0, 0, 0],
@@ -774,500 +868,561 @@ class IsotropicRayGenerator(IRayGenerator):
             offset_radius=1.0,
         )
     """
-
-    def __init__(
-        self,
-        number_of_rays: int,
-        center: Vector3,
-        source_radius: float,
-        offset_radius: float,
-    ) -> None: ...
-
+    def __init__(self, number_of_rays: typing.SupportsInt | typing.SupportsIndex, center: photontracer._typing.Vector3, source_radius: typing.SupportsFloat | typing.SupportsIndex, offset_radius: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create an isotropic source.
+        
+        Args:
+            number_of_rays: Number of rays to launch.
+            center: Centre of the sphere.
+            source_radius: Radius of the sphere the rays start on.
+            offset_radius: Radius in geometry units of the disk, tangential to the
+                sphere, in which the ray origins are shifted; ``0`` makes every ray
+                pass through ``center``.
+        """
     @property
-    def center(self) -> Vector3:
-        """Centre of the spherical source region."""
-        ...
-
+    def center(self) -> tuple[float, float, float]:
+        """
+        Centre of the sphere the rays start on.
+        """
     @center.setter
-    def center(self, value: Vector3) -> None: ...
-
-    @property
-    def source_radius(self) -> float:
-        """Radius of the sphere from which rays are emitted towards the center."""
+    def center(self, arg1: photontracer._typing.Vector3) -> None:
         ...
-
-    @source_radius.setter
-    def source_radius(self, value: float) -> None: ...
-
     @property
     def offset_radius(self) -> float:
-        """Tangential offset radius in geometry units."""
-        ...
-
+        """
+        Radius in geometry units of the tangential shift of the ray origins.
+        """
     @offset_radius.setter
-    def offset_radius(self, value: float) -> None: ...
-
-
-class CameraRayGenerator(IRayGenerator):
-    """A perspective pinhole camera that generates rays for image rendering.
-
-    The launch shape is ``(samples_per_pixel, image_width, image_height)``,
-    so the total number of device threads equals
-    ``samples_per_pixel * image_width * image_height``.  Output buffer shapes
-    will match this 3-D layout.
-
-    All angle properties are in **degrees**.
-
-    Example::
-
-        cam = CameraRayGenerator()
-        cam.image_width      = 800
-        cam.image_height     = 600
-        cam.samples_per_pixel = 16
-        cam.vertical_fov     = 45.0
-        cam.look_from        = [0, 0, -500]
-        cam.look_at          = [0, 0, 0]
-        cam.vertical_up      = [0, 1, 0]
-        cam.focus_distance   = 500.0
+    def offset_radius(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def source_radius(self) -> float:
+        """
+        Radius of the sphere the rays start on.
+        """
+    @source_radius.setter
+    def source_radius(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+class DiffuseRayGenerator(IRayGenerator):
     """
-
-    def __init__(self) -> None: ...
-
+    A diffuse (Lambertian) source illuminating a surface from one hemisphere.
+    
+    Ray origins are uniformly distributed on a disk of radius ``offset_radius``
+    centred at ``origin`` and perpendicular to ``direction``. Ray directions are
+    cosine-weighted around ``direction``, i.e. the density is proportional to the
+    cosine of the angle to ``direction``, which is the flux of an isotropic
+    radiance field onto a surface normal to ``direction``. All rays point into
+    the hemisphere around ``direction``. The launch shape is
+    ``(number_of_rays,)``.
+    
+    Example::
+    
+        gen = DiffuseRayGenerator(
+            number_of_rays=1_000_000,
+            origin=[0, 0, 100],
+            direction=[0, 0, -1],
+            offset_radius=50.0,
+        )
+    """
+    def __init__(self, number_of_rays: typing.SupportsInt | typing.SupportsIndex, origin: photontracer._typing.Vector3, direction: photontracer._typing.Vector3, offset_radius: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        """
+        Create a diffuse source.
+        
+        Args:
+            number_of_rays: Number of rays to launch.
+            origin: Centre of the source disk.
+            direction: Axis of the hemisphere the rays are emitted into, e.g.
+                ``[0, 0, -1]`` for light falling down onto a surface in the xy-plane;
+                normalised automatically.
+            offset_radius: Radius of the source disk in geometry units.
+        """
     @property
-    def image_width(self) -> int:
-        """Output image width in pixels."""
+    def direction(self) -> tuple[float, float, float]:
+        """
+        Unit axis of the hemisphere the rays are emitted into; normalised when set.
+        """
+    @direction.setter
+    def direction(self, arg1: photontracer._typing.Vector3) -> None:
         ...
-
-    @image_width.setter
-    def image_width(self, value: int) -> None: ...
-
     @property
-    def image_height(self) -> int:
-        """Output image height in pixels."""
+    def offset_radius(self) -> float:
+        """
+        Radius of the source disk in geometry units.
+        """
+    @offset_radius.setter
+    def offset_radius(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
         ...
-
-    @image_height.setter
-    def image_height(self, value: int) -> None: ...
-
+    @property
+    def origin(self) -> tuple[float, float, float]:
+        """
+        Centre of the source disk.
+        """
+    @origin.setter
+    def origin(self, arg1: photontracer._typing.Vector3) -> None:
+        ...
+class CameraRayGenerator(IRayGenerator):
+    """
+    A perspective pinhole camera that generates rays for rendering images.
+    
+    The launch shape is ``(samples_per_pixel, image_width, image_height)``, so
+    the output buffers have the shape ``(image_height, image_width,
+    samples_per_pixel, ...)``, without the samples dimension if
+    ``samples_per_pixel`` is ``1``. Angles are in degrees.
+    
+    Example::
+    
+        cam = CameraRayGenerator()
+        cam.image_width       = 800
+        cam.image_height      = 600
+        cam.samples_per_pixel = 16
+        cam.vertical_fov      = 45.0
+        cam.look_from         = [0, 0, -500]
+        cam.look_at           = [0, 0, 0]
+        cam.vertical_up       = [0, 1, 0]
+        cam.focus_distance    = 500.0
+    """
+    def __init__(self) -> None:
+        ...
     @property
     def aspect_ratio(self) -> float:
-        """Aspect ratio (width / height).  Setting this updates the camera frame."""
-        ...
-
+        """
+        Aspect ratio width / height.
+        """
     @aspect_ratio.setter
-    def aspect_ratio(self, value: float) -> None: ...
-
-    @property
-    def samples_per_pixel(self) -> int:
-        """Number of stochastic samples per pixel (anti-aliasing / Monte Carlo)."""
+    def aspect_ratio(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
         ...
-
-    @samples_per_pixel.setter
-    def samples_per_pixel(self, value: int) -> None: ...
-
-    @property
-    def vertical_fov(self) -> float:
-        """Vertical field of view in degrees."""
-        ...
-
-    @vertical_fov.setter
-    def vertical_fov(self, value: float) -> None: ...
-
-    @property
-    def look_from(self) -> Vector3:
-        """Camera position in world space."""
-        ...
-
-    @look_from.setter
-    def look_from(self, value: Vector3) -> None: ...
-
-    @property
-    def look_at(self) -> Vector3:
-        """Point the camera is aimed at in world space."""
-        ...
-
-    @look_at.setter
-    def look_at(self, value: Vector3) -> None: ...
-
-    @property
-    def vertical_up(self) -> Vector3:
-        """World-space "up" vector used to orient the camera roll."""
-        ...
-
-    @vertical_up.setter
-    def vertical_up(self, value: Vector3) -> None: ...
-
     @property
     def defocus_angle(self) -> float:
-        """Half-angle of the lens aperture cone in degrees.  ``0`` disables depth-of-field."""
-        ...
-
+        """
+        Opening angle of the cone of rays through each pixel in degrees, for depth of field; 0 disables it.
+        """
     @defocus_angle.setter
-    def defocus_angle(self, value: float) -> None: ...
-
+    def defocus_angle(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
     @property
     def focus_distance(self) -> float:
-        """Distance from the camera to the plane of perfect focus."""
-        ...
-
+        """
+        Distance from the camera to the plane in focus.
+        """
     @focus_distance.setter
-    def focus_distance(self, value: float) -> None: ...
-
-
+    def focus_distance(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def image_height(self) -> int:
+        """
+        Image height in pixels.
+        """
+    @image_height.setter
+    def image_height(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def image_width(self) -> int:
+        """
+        Image width in pixels.
+        """
+    @image_width.setter
+    def image_width(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def look_at(self) -> tuple[float, float, float]:
+        """
+        Point the camera is aimed at.
+        """
+    @look_at.setter
+    def look_at(self, arg1: photontracer._typing.Vector3) -> None:
+        ...
+    @property
+    def look_from(self) -> tuple[float, float, float]:
+        """
+        Position of the camera.
+        """
+    @look_from.setter
+    def look_from(self, arg1: photontracer._typing.Vector3) -> None:
+        ...
+    @property
+    def samples_per_pixel(self) -> int:
+        """
+        Number of rays per pixel.
+        """
+    @samples_per_pixel.setter
+    def samples_per_pixel(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def vertical_fov(self) -> float:
+        """
+        Vertical field of view in degrees.
+        """
+    @vertical_fov.setter
+    def vertical_fov(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def vertical_up(self) -> tuple[float, float, float]:
+        """
+        Up direction of the camera, which sets its roll.
+        """
+    @vertical_up.setter
+    def vertical_up(self, arg1: photontracer._typing.Vector3) -> None:
+        ...
 class Simulation:
-    """Main entry point for GPU ray tracing simulations.
-
-    A ``Simulation`` wraps an NVIDIA OptiX device context and manages the full
-    rendering pipeline: geometry acceleration structures, ray generation, CUDA
-    kernel launch, and output buffer retrieval.
-
-    Args:
-        gpu_id: Zero-based index of the CUDA device to use (default ``0``).
-        optix_logging_level: Verbosity of OptiX internal messages, ``0``
-            (silent) to ``4`` (verbose).  Default ``1``.
-        enable_validation_mode: Enable OptiX validation mode for additional
-            runtime checks during development.  Significantly slower; leave
-            ``False`` in production.
-
-    Typical usage::
-
-        sim = Simulation(gpu_id=0)
-
+    """
+    A ray tracing simulation.
+    
+    A ``Simulation`` holds a ray tracing backend and everything needed for a
+    launch: the geometry, the materials, the ray generator and the outputs.
+    
+    Example::
+    
+        sim = Simulation()
+    
         sim.geometry      = MeshGeometry(vertices, faces)
-        sim.materials     = [Material(REFRACTIVE, 1.33+0j)]
+        sim.materials     = [Material(REFRACTIVE, 1+0j), Material(REFRACTIVE, 1.33+0j)]
         sim.wavelength_um = 0.532          # green light
         sim.length_unit   = MICRO_METER
         sim.ray_generator = ParallelRayGenerator(100_000, [0,0,-200], [0,0,1], 50)
         sim.outputs       = [OutputType.SCATTERING_COUNT, OutputType.LAST_DIRECTION]
         sim.run()
-
+    
         counts = sim.get_output_buffer(OutputType.SCATTERING_COUNT)
     """
-
-    def __init__(
-        self,
-        gpu_id: int = 0,
-        optix_logging_level: int = 1,
-        enable_validation_mode: bool = False,
-    ) -> None: ...
-
-    def run(self) -> None:
-        """Build the pipeline and launch the ray tracing kernel.
-
-        This method (re-)compiles the OptiX pipeline if any simulation
-        parameter has changed since the last call, uploads all configuration
-        to the device, launches the CUDA kernel, and waits for completion.
-        Output buffers are then available via :meth:`get_output_buffer`.
-
-        All of the following must be set before calling ``run()``:
-
-        * :attr:`geometry`
-        * :attr:`materials`
-        * :attr:`ray_generator`
-        * :attr:`outputs`
+    def __init__(self, gpu_id: typing.SupportsInt | typing.SupportsIndex = 0, optix_logging_level: typing.SupportsInt | typing.SupportsIndex = 1, enable_validation_mode: bool = False, backend: Backend | None = None, cpu_threads: typing.SupportsInt | typing.SupportsIndex = 0) -> None:
         """
-        ...
-
+        Create a simulation on one of the backends of this build.
+        
+        Args:
+            gpu_id: Index of the CUDA device to use. OptiX only.
+            optix_logging_level: Verbosity of the OptiX messages, ``0`` (silent) to
+                ``4``. OptiX only.
+            enable_validation_mode: Enable the OptiX validation mode with additional
+                runtime checks. Much slower, for development only. OptiX only.
+            backend: :class:`Backend` to trace with. By default OptiX if the build
+                has it and a CUDA device is available, and Embree otherwise. Falling
+                back to Embree in a build with OptiX emits a ``RuntimeWarning``.
+            cpu_threads: Number of threads of the Embree backend; ``0`` uses all
+                cores.
+        """
+    def calculate_volume_fraction(self, box_min: photontracer._typing.Vector3, box_max: photontracer._typing.Vector3, number_of_samples: typing.SupportsInt | typing.SupportsIndex) -> float:
+        """
+        Estimate the fraction of an axis-aligned box that is inside the geometry.
+        
+        ``number_of_samples`` random points are drawn uniformly in the box, and the
+        fraction of them inside the geometry is returned.
+        
+        Args:
+            box_min: Minimum corner of the box.
+            box_max: Maximum corner of the box.
+            number_of_samples: Number of random points.
+        
+        Returns:
+            The estimated volume fraction in ``[0, 1]``.
+        """
     def free_device_memory(self) -> None:
-        """Release all device-side buffers held by this simulation.
-
-        Frees the OptiX pipeline, output buffers, and geometry acceleration
-        structures.  :meth:`run` can be called again after this (it will
-        reallocate everything from scratch).
         """
-        ...
-
-    def calculate_volume_fraction(self, box_min: Vector3, box_max: Vector3,
-                                  number_of_samples: int) -> float:
-        """Estimate the volume fraction of geometry inside an axis-aligned box.
-
-        Uses Monte Carlo point sampling: ``number_of_samples`` random points
-        are drawn uniformly inside the box and the fraction that fall inside
-        the geometry is returned.
-
-        Args:
-            box_min: Minimum corner of the sampling box (:data:`Vector3`).
-            box_max: Maximum corner of the sampling box (:data:`Vector3`).
-            number_of_samples: Number of random sample points.  Higher values
-                give a more accurate estimate at the cost of computation time.
-
-        Returns:
-            Estimated volume fraction in ``[0, 1]``.
+        Release the device buffers held by the simulation.
+        
+        Frees the pipeline, the output buffers and the acceleration structures of
+        the geometry, and releases the geometry itself: assign :attr:`geometry`
+        again before the next :meth:`run`, which then builds everything anew.
         """
-        ...
-
     def get_output_buffer(self, output_type: OutputType) -> numpy.ndarray:
-        """Copy an output buffer from the GPU and return it as a NumPy array.
-
-        Must be called **after** :meth:`run`.  The returned array is a fresh
-        copy (not a view) of device memory.
-
+        """
+        Copy an output buffer of the last run to a new NumPy array.
+        
+        The dtype and the components of each buffer are listed in
+        :class:`OutputType`. The leading dimensions are those of the launch, without
+        dimensions of size 1: ``(number_of_rays,)`` for the parallel, isotropic and
+        diffuse ray generators, ``(image_height, image_width, samples_per_pixel)``
+        for a :class:`CameraRayGenerator`. A vector quantity adds a last dimension of
+        3 or 4 components.
+        
         Args:
-            output_type: The :class:`OutputType` to retrieve.  Must have been
-                included in :attr:`outputs` before the last ``run()`` call.
-
-        Returns:
-            NumPy array with shape and dtype determined by the output type:
-
-            ========================= =========== ==================
-            OutputType                dtype       shape
-            ========================= =========== ==================
-            LAST_DIRECTION            float32     ``(N, 3)``
-            LAST_POSITION             float32     ``(N, 3)``
-            RAY_STATE                 int32       ``(N,)``
-            LAST_MEDIUM_ID            int32       ``(N,)``
-            SCATTERING_COUNT          uint32      ``(N,)``
-            NUMBER_OF_WARNINGS        uint32      ``(N,)``
-            STOKES_VECTOR             float32     ``(N, 4)``
-            STOKES_VECTOR_IN          float32     ``(N, 4)``
-            OPTICAL_PATH_LENGTH       float64     ``(N,)``
-            SOURCE_DIRECTION          float32     ``(N, 3)``
-            SOURCE_POSITION           float32     ``(N, 3)``
-            SCATTERING_ANGLE          float32     ``(N,)``
-            Q_MINUS_AXIS_IN           float32     ``(N, 3)``
-            DIRECTION_HISTOGRAM_HEALPIX uint32    ``(npix,)``
-            ========================= =========== ==================
-
-            where *N* is the number of rays and *npix* is the number of
-            HEALPix pixels for the configured ``direction_healpix_nside``.
-
+            output_type: The buffer to copy. It must have been in :attr:`outputs`
+                for the last :meth:`run`.
+        
         Raises:
-            RuntimeError: If ``run()`` has not been called yet, or the
-                requested output type was not enabled.
+            RuntimeError: If :meth:`run` has not been called yet, or the output
+                type was not enabled.
         """
-        ...
-
-    @property
-    def geometry(self) -> IGeometry | None:
-        """The root geometry used in the simulation.
-
-        Assign a :class:`MeshGeometry` or
-        :class:`InstanceGeometry` before calling :meth:`run`.
-        If a MeshGeometry, which contains no material id information, is assigned,
-        the material id defaults to 1 for the mesh. Wrapping the mesh in an InstanceGeometry 
-        allows to set the material id for each instance.
+    def get_trace(self) -> numpy.ndarray:
         """
-        ...
-
-    @geometry.setter
-    def geometry(self, value: IGeometry) -> None: ...
-
-    @property
-    def materials(self) -> list[Material]:
-        """List of materials referenced by geometry faces / instances.
-
-        Each geometry primitive or instance addresses a material by its
-        zero-based index in this list.  Must contain at least the number of
-        distinct material IDs used by the geometry.
+        Return the steps of the traced rays of the last run, ordered by ray and step.
+        
+        A structured array with the fields ``ray``, ``step``, ``event`` (a
+        :class:`TraceEvent`), ``medium_in``, ``medium_out``, ``origin_in``,
+        ``direction_in``, ``origin_out``, ``direction_out`` (each ``float32[3]``),
+        ``stokes`` (``float32[4]``) and ``optical_path_length``. A step goes from a
+        start to the next interaction: ``origin_in`` and ``direction_in`` are the ray
+        before it, ``origin_out`` (just off the surface that was hit) and
+        ``direction_out`` after it. The Stokes vector and the optical path length are
+        those after the step. A ray with ``SCATTERING_COUNT`` scatterings has that
+        many steps plus the last one.
+        
+        Raises:
+            RuntimeError: If no rays were traced in the last run.
         """
-        ...
-
-    @materials.setter
-    def materials(self, value: list[Material]) -> None: ...
-
-    @property
-    def wavelength_um(self) -> float:
-        """Simulation wavelength in micrometres (μm).
-
-        Used to compute the scale factor that converts geometry coordinates
-        (in :attr:`length_unit`) to μm for absorption and scattering calculations.
-        Default ``0.5`` μm (green light).
+    def run(self) -> None:
         """
-        ...
-
-    @wavelength_um.setter
-    def wavelength_um(self, value: float) -> None: ...
-
-    @property
-    def length_unit(self) -> LengthUnit:
-        """Physical unit of the geometry coordinates.
-
-        The simulation multiplies all lengths by the appropriate scale factor
-        so that :attr:`wavelength_um` (always in μm) is consistent with the
-        scattering / absorption calculations.  Default ``MICRO_METER``.
+        Trace the rays.
+        
+        Builds what changed since the last run (acceleration structures, pipeline,
+        output buffers), launches the rays and waits for them. The results are then
+        available from :meth:`get_output_buffer` and :meth:`get_trace`.
+        
+        :attr:`geometry`, :attr:`materials`, :attr:`wavelength_um`,
+        :attr:`ray_generator` and :attr:`outputs` must be set before.
         """
-        ...
-
-    @length_unit.setter
-    def length_unit(self, value: LengthUnit) -> None: ...
-
-    @property
-    def stokes_vector(self) -> tuple[float, float, float, float]:
-        """Initial Stokes vector ``[I, Q, U, V]`` of all source rays.
-
-        For unpolarised light use ``(1, 0, 0, 0)`` (default).
-        For linearly polarised light along the Q+ direction use
-        ``(1, 1, 0, 0)``.
-        """
-        ...
-
-    @stokes_vector.setter
-    def stokes_vector(self, value: typing.Sequence[float]) -> None: ...
-
-    @property
-    def q_minus_axis_seed(self) -> tuple[float, float, float]:
-        """Reference direction for the Q− axis of the Stokes vector at the source.
-
-        The Q− axis defines the reference frame for the polarisation state.
-        This vector is perpendicular to the ray direction and determines the
-        orientation of the ``Q`` and ``U`` Stokes components.
-        """
-        ...
-
-    @q_minus_axis_seed.setter
-    def q_minus_axis_seed(self, value: typing.Sequence[float]) -> None: ...
-
-    @property
-    def max_scattering_count(self) -> int:
-        """Maximum number of scattering events per ray before it is terminated.
-
-        Set to ``0`` (default) to allow unlimited scattering.  A finite value
-        is useful to cap computation time.
-        """
-        ...
-
-    @max_scattering_count.setter
-    def max_scattering_count(self, value: int) -> None: ...
-
-    @property
-    def max_nested_geometry_levels(self) -> int:
-        """Maximum depth of nested :class:`InstanceGeometry` hierarchies.
-
-        Corresponds to the OptiX traversable depth.  Valid range is ``1``–``31``
-        (default ``2``).  Increase when the geometry has more than two
-        levels of nesting.
-        """
-        ...
-
-    @max_nested_geometry_levels.setter
-    def max_nested_geometry_levels(self, value: int) -> None: ...
-
-    @property
-    def max_sub_geometries(self) -> int:
-        """Read-only hardware limit on the number of sub-geometries in an :class:`InstanceGeometry`."""
-        ...
-
-    @property
-    def max_mesh_triangles(self) -> int:
-        """Read-only hardware limit on the number of triangles per :class:`MeshGeometry`."""
-        ...
-
-    @property
-    def seed(self) -> int:
-        """Initial seed for the on-device random number generator.
-
-        Changing the seed produces statistically independent simulation runs
-        for variance estimation.  Default ``0``.
-        """
-        ...
-
-    @seed.setter
-    def seed(self, value: int) -> None: ...
-
-    @property
-    def use_complex_fresnel(self) -> bool:
-        """Use the full complex Fresnel equations for refractive materials.
-
-        When ``True``, the simulator applies complex-valued Fresnel
-        coefficients, which correctly model absorption at interfaces (e.g. fresnel peak in water ice).  When ``False``, real-valued Fresnel
-        equations are used. Mainly interesting for testing, as the complex valued calculation only adds a small overhead.
-        Default ``False``.
-        """
-        ...
-
-    @use_complex_fresnel.setter
-    def use_complex_fresnel(self, value: bool) -> None: ...
-
     @property
     def direction_healpix_nside(self) -> int:
-        """HEALPix ``NSIDE`` parameter for the direction histogram output.
-
-        When > ``0``, rays that exit the scene without being absorbed are
-        binned into a HEALPix sphere tessellation with this ``NSIDE``, giving
-        ``12 * NSIDE ** 2`` pixels.  The histogram is available as
-        ``OutputType.DIRECTION_HISTOGRAM_HEALPIX``.
-
-        Set to ``0`` (default) to disable the histogram.
         """
-        ...
-
+        HEALPix ``NSIDE`` of the histogram of escape directions.
+        
+        When > ``0`` (a power of 2), the directions of the rays that leave the scene
+        are counted in ``12 * NSIDE ** 2`` HEALPix pixels, available as
+        ``OutputType.DIRECTION_HISTOGRAM_HEALPIX``. ``0`` (default) disables the
+        histogram.
+        
+        Raises:
+            ValueError: If the value is not ``0`` or a power of 2.
+        """
     @direction_healpix_nside.setter
-    def direction_healpix_nside(self, value: int) -> None: ...
-
-    @property
-    def ray_generator(self) -> IRayGenerator | None:
-        """The ray generator that defines source rays.
-
-        Assign a :class:`ParallelRayGenerator`, :class:`IsotropicRayGenerator`,
-        or :class:`CameraRayGenerator` before calling :meth:`run`.
-        """
+    def direction_healpix_nside(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
         ...
-
-    @ray_generator.setter
-    def ray_generator(self, value: IRayGenerator) -> None: ...
-
+    @property
+    def geometry(self) -> IGeometry:
+        """
+        The root geometry of the scene.
+        
+        Assign a :class:`MeshGeometry` or :class:`InstanceGeometry` before calling
+        :meth:`run`.
+        """
+    @geometry.setter
+    def geometry(self, arg1: IGeometry) -> None:
+        ...
+    @property
+    def length_unit(self) -> LengthUnit:
+        """
+        Unit of the geometry coordinates, default MICRO_METER.
+        """
+    @length_unit.setter
+    def length_unit(self, arg1: LengthUnit) -> None:
+        ...
+    @property
+    def materials(self) -> list[Material]:
+        """
+        The materials of the scene, at most 16.
+        
+        Geometries refer to materials by their index in this list; material ``0`` is
+        the medium outside of all geometry. A :class:`MeshGeometry` uses material
+        ``1`` for its inside, so it needs at least two materials.
+        """
+    @materials.setter
+    def materials(self, arg1: collections.abc.Sequence[Material]) -> None:
+        ...
+    @property
+    def max_mesh_triangles(self) -> int:
+        """
+        Maximum number of triangles of a MeshGeometry on this backend.
+        """
+    @property
+    def max_nested_geometry_levels(self) -> int:
+        """
+        Maximum depth of nested :class:`InstanceGeometry` hierarchies, default ``5``.
+        
+        Must be between ``1`` and the limit of the backend. Increase it for
+        geometries nested more deeply.
+        
+        Raises:
+            ValueError: If the value is outside of that range.
+        """
+    @max_nested_geometry_levels.setter
+    def max_nested_geometry_levels(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def max_scattering_count(self) -> int:
+        """
+        Maximum number of interactions per ray.
+        
+        A ray that reaches it is stopped with ``RAY_STATE`` 2. ``0`` means no limit;
+        the default is ``4294967295``.
+        """
+    @max_scattering_count.setter
+    def max_scattering_count(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def max_sub_geometries(self) -> int:
+        """
+        Maximum number of sub-geometries of an InstanceGeometry on this backend.
+        """
+    @property
+    def max_trace_steps(self) -> int:
+        """
+        Steps recorded per traced ray (default 1000); later steps are not stored.
+        """
+    @max_trace_steps.setter
+    def max_trace_steps(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
     @property
     def outputs(self) -> list[OutputType]:
-        """List of output quantities to compute during the simulation.
-
-        Assign before calling :meth:`run`.  Only the listed
-        :class:`OutputType` values will have their device buffers allocated
-        and filled; requesting additional types after the fact requires
-        another ``run()`` call.
-
+        """
+        The output buffers to fill in the next run.
+        
+        Only the listed :class:`OutputType` buffers are allocated and filled.
+        
         Example::
-
+        
             sim.outputs = [
                 OutputType.SCATTERING_COUNT,
                 OutputType.LAST_DIRECTION,
                 OutputType.STOKES_VECTOR,
             ]
         """
-        ...
-
     @outputs.setter
-    def outputs(self, value: typing.Sequence[OutputType]) -> None: ...
-
-
-def is_cuda_available() -> bool:
-    """Return ``True`` if at least one CUDA-capable GPU is detected.
-
-    Queries ``cudaGetDeviceCount`` at runtime.  Use this to guard simulation
-    code when running on machines that may not have a compatible GPU.
-
-    Example::
-
-        if not is_cuda_available():
-            raise RuntimeError("No CUDA GPU found — cannot run simulation.")
+    def outputs(self, arg1: collections.abc.Sequence[OutputType]) -> None:
+        ...
+    @property
+    def q_minus_axis_seed(self) -> tuple[float, float, float]:
+        """
+        Direction from which the Q− axis of the source Stokes vector is made.
+        
+        The Q− axis of each source ray is this direction projected onto the plane
+        perpendicular to the ray. With the default ``(nan, nan, nan)``, or if the
+        direction is parallel to the ray, the x axis is used instead (the y axis for
+        rays along x). The axis of each ray is available as
+        ``OutputType.Q_MINUS_AXIS_IN``.
+        """
+    @q_minus_axis_seed.setter
+    def q_minus_axis_seed(self, arg1: photontracer._typing.Vector3) -> None:
+        ...
+    @property
+    def random_number_generator(self) -> RandomNumberGenerator:
+        """
+        Random number generator of the ray tracing kernels.
+        
+        ``PCG32`` (default) or ``MRG32K3A``, the curand generator of the 1.0
+        releases. Changing it rebuilds the pipeline on the next :meth:`run`.
+        
+        Raises:
+            ValueError: If the generator is not available on the backend.
+        """
+    @random_number_generator.setter
+    def random_number_generator(self, arg1: RandomNumberGenerator) -> None:
+        ...
+    @property
+    def ray_generator(self) -> IRayGenerator:
+        """
+        The source of the rays: a ParallelRayGenerator, IsotropicRayGenerator, DiffuseRayGenerator or CameraRayGenerator.
+        """
+    @ray_generator.setter
+    def ray_generator(self, arg1: IRayGenerator) -> None:
+        ...
+    @property
+    def seed(self) -> int:
+        """
+        Seed of the random number generator, default ``42``.
+        
+        The same seed gives the same rays when run again with the same build and
+        :attr:`random_number_generator`; other seeds give statistically independent
+        runs.
+        """
+    @seed.setter
+    def seed(self, arg1: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    @property
+    def stokes_vector(self) -> tuple[float, float, float, float]:
+        """
+        Stokes vector ``[I, Q, U, V]`` of the source rays, default ``(1, 0, 0, 0)``.
+        
+        ``I`` must be ``1``, and ``Q² + U² + V² ≤ 1``. ``(1, 0, 0, 0)`` is
+        unpolarized light, ``(1, 1, 0, 0)`` light polarized along the Q+ axis.
+        
+        Each ray can be given a random polarization instead:
+        ``(1, nan, nan, 0)`` is fully linearly polarized light at a random angle,
+        ``(1, 0, 0, nan)`` gives each ray ``V = cos(2πu)`` with ``u`` uniform in
+        ``[0, 1)``, i.e. a random ``V`` in ``[-1, 1]``. The other components must be
+        ``0``.
+        
+        Raises:
+            ValueError: If the vector is not a valid Stokes vector.
+        """
+    @stokes_vector.setter
+    def stokes_vector(self, arg1: photontracer._typing.Vector4) -> None:
+        ...
+    @property
+    def trace_rays(self) -> list[int]:
+        """
+        Indices of the rays whose steps are recorded (at most 256).
+        
+        An index is the position of the ray in the flattened output buffers. Seeds
+        are deterministic, so a ray found in a normal run can be traced in the next
+        one. Sorted and without duplicates when read. See :meth:`get_trace`.
+        """
+    @trace_rays.setter
+    def trace_rays(self, arg1: collections.abc.Sequence[typing.SupportsInt | typing.SupportsIndex]) -> None:
+        ...
+    @property
+    def use_complex_fresnel(self) -> bool:
+        """
+        Use the complex Fresnel equations for refractive materials, default ``True``.
+        
+        The complex coefficients model absorption at interfaces correctly (e.g. the
+        Fresnel peak in water ice) at a small cost. ``False`` uses the real-valued
+        equations, mainly for testing.
+        """
+    @use_complex_fresnel.setter
+    def use_complex_fresnel(self, arg1: bool) -> None:
+        ...
+    @property
+    def wavelength_um(self) -> float:
+        """
+        Wavelength in micrometres (μm); must be set before :meth:`run`.
+        
+        Together with :attr:`length_unit` it converts the imaginary part of the
+        refractive indices into absorption coefficients.
+        """
+    @wavelength_um.setter
+    def wavelength_um(self, arg1: typing.SupportsFloat | typing.SupportsIndex) -> None:
+        ...
+def available_backends() -> list[Backend]:
     """
-    ...
-
-
+    The raytracing backends of this build, the default one first.
+    """
+def is_cuda_available() -> bool:
+    """
+    Whether at least one CUDA device is available.
+    """
+def is_verbose() -> bool:
+    """
+    Whether progress messages are printed.
+    """
+def set_verbose(verbose: bool) -> None:
+    """
+    Print progress messages (device in use, compile and launch times). Off by default.
+    """
 DIFFUSE: MaterialType
-REFRACTIVE: MaterialType
-REFLECTIVE: MaterialType
-VOLUME_SCATTERING: MaterialType
-
+DIRECTION_HISTOGRAM_HEALPIX: OutputType
+EMBREE: Backend
+FIRST_POSITION: OutputType
+LAST_DIRECTION: OutputType
+LAST_MEDIUM_ID: OutputType
+LAST_POSITION: OutputType
 MESH: GeometryType
 MESH_INSTANCED: GeometryType
-
+METER: LengthUnit
 MICRO_METER: LengthUnit
 MILLI_METER: LengthUnit
-METER: LengthUnit
-
-LAST_DIRECTION: OutputType
-LAST_POSITION: OutputType
-RAY_STATE: OutputType
-LAST_MEDIUM_ID: OutputType
-SCATTERING_COUNT: OutputType
+MRG32K3A: RandomNumberGenerator
 NUMBER_OF_WARNINGS: OutputType
-STOKES_VECTOR: OutputType
-STOKES_VECTOR_IN: OutputType
 OPTICAL_PATH_LENGTH: OutputType
+OPTIX: Backend
+PCG32: RandomNumberGenerator
+Q_MINUS_AXIS_IN: OutputType
+RAY_STATE: OutputType
+REFLECTIVE: MaterialType
+REFRACTIVE: MaterialType
+SCATTERING_ANGLE: OutputType
+SCATTERING_COUNT: OutputType
 SOURCE_DIRECTION: OutputType
 SOURCE_POSITION: OutputType
-SCATTERING_ANGLE: OutputType
-Q_MINUS_AXIS_IN: OutputType
-LOGS: OutputType
-LOG_OFFSETS: OutputType
-DIRECTION_HISTOGRAM_HEALPIX: OutputType
+STOKES_VECTOR: OutputType
+STOKES_VECTOR_IN: OutputType
+VOLUME_SCATTERING: MaterialType
